@@ -1,0 +1,12 @@
+# Ignore EVERYTHING by default
+*
+
+# Explicitly allow only what you want public
+!.gitignore
+!README.md
+!nvim/
+!nvim/**
+!wezterm/
+!wezterm/**
+!starship/
+!starship/**

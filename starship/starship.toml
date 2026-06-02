@@ -1,0 +1,36 @@
+# starship.toml
+
+# General
+add_newline = true
+
+[character]
+success_symbol = "[❯](bold green)"
+error_symbol = "[❯](bold red)"
+
+[git_branch]
+symbol = " "
+style = "bold purple"
+
+[git_status]
+ahead = "⇡${count}"
+behind = "⇣${count}"
+diverged = "⇕⇡${ahead_count}⇣${behind_count}"
+modified = "!${count}"
+untracked = "?${count}"
+staged = "+${count}"
+
+[directory]
+truncation_length = 3
+truncate_to_repo = true
+
+[nodejs]
+symbol = "🌐"
+
+[python]
+symbol = "🐍"
+
+[rust]
+symbol = "🦀"
+
+[dotnet]
+symbol = "🟣"
