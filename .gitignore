@@ -12,4 +12,7 @@
 !starship/**
 !claude/
 !claude/**
+!VERSION
+!.cz.toml
+
 **/.DS_Store
