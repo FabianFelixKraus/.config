@@ -4,6 +4,7 @@
 # Explicitly allow only what you want public
 !.gitignore
 !.gitmodules
+!.zshrc
 !README.md
 !nvim/
 !nvim/**
