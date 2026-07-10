@@ -1,0 +1,6 @@
+[submodule "ai/skills/mattpocock"]
+	path = ai/skills/mattpocock
+	url = https://github.com/mattpocock/skills.git
+[submodule "ai/skills/academic-research"]
+	path = ai/skills/academic-research
+	url = https://github.com/imbad0202/academic-research-skills.git

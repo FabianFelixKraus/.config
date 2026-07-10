@@ -3,6 +3,7 @@
 
 # Explicitly allow only what you want public
 !.gitignore
+!.gitmodules
 !README.md
 !nvim/
 !nvim/**
@@ -10,8 +11,8 @@
 !wezterm/**
 !starship/
 !starship/**
-!claude/
-!claude/**
+!ai/
+!ai/**
 !VERSION
 !.cz.toml
 
