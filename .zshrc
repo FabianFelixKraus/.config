@@ -3,10 +3,10 @@
 # =============================================================================
 # Start with base paths and build up systematically
 
+export PATH="$HOME/.local/bin:$PATH"                     # User binaries (nvim, pipx, etc)
 export PATH="/usr/local/opt/inetutils/libexec/gnubin:$PATH"
 export PATH="$PATH:$HOME/.local/bin"                     # pipx
 export PATH="/opt/homebrew/opt/ruby/bin:$PATH"           # Ruby
-export PATH="$HOME/.antigravity/antigravity/bin:$PATH"   # Antigravity
 
 # Docker CLI & Compose
 
@@ -32,7 +32,10 @@ esac
 # =============================================================================
 # Python (pyenv)
 
+if command -v pyenv >/dev/null 2>&1; then
 eval "$(pyenv init --path)"
+fi
+
 
 # Node (nvm)
 export NVM_DIR="$HOME/.nvm"
@@ -83,5 +86,8 @@ print -Pn "\e]7;file://%m%d\a"
 fi
 
 # Initialize Starship prompt
+if command -v starship >/dev/null 2>&1; then
 eval "$(starship init zsh)"
+fi
+
 echo -e "\n✅ Profile loaded successfully."
