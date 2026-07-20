@@ -18,7 +18,47 @@ by one or more collector nodes. The tool for querying it is
   /home/bitcoin/.config/ai/tools/ln_db_query.py "SELECT ..." [--json]
 ```
 
-Credentials are read from `/home/bitcoin/ln-history-research/analysis/.env`.
+Credentials are read from `/home/bitcoin/ln-history-research/analysis/.env` — this is
+the **read-only `ai_reader`** role (SELECT only).
+
+Any write (UPDATE, DELETE, CREATE INDEX, ALTER TABLE, CLUSTER) needs the admin role
+in `/home/bitcoin/ln-history-research/analysis/.env.migration` (vars are `DB_HOST`,
+`DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`). `psql` is not installed on the host;
+reach it through the container:
+
+```
+set -a && . ./.env.migration && set +a && docker exec -e PGPASSWORD="$DB_PASSWORD" \
+  ln-history-database psql -U "$DB_USER" -d "$DB_NAME" -c "..."
+```
+
+---
+
+## Hardware-Aware Query Protocol
+
+The database runs on a VPS with **8 AMD EPYC vCores, 32 GB ECC RAM, and a 600 GB NVMe drive**.
+
+### The Golden Rule
+
+Before using `ln_db_query.py` for any complex query — aggregations, joins, or queries that touch large tables (`gossip_observations` ~95.5M rows / 56 GB, `channel_updates` ~144M rows / 147 GB, `node_announcements_complete` ~26M rows, `node_addresses` ~66M rows, etc.) — you **MUST** first run the query through `ln_db_explain.py`.
+
+Run the explain tool using the project venv:
+
+```
+/home/bitcoin/ln-history-research/analysis/.venv/bin/python3 \
+  /home/bitcoin/.config/ai/tools/ln_db_explain.py "SELECT ..."
+```
+
+### Cost threshold
+
+If `total_cost` returned by `ln_db_explain.py` **exceeds 1,000,000**, you must **stop** and warn the user before proceeding. The warning must include:
+
+1. The estimated `total_cost` and `plan_rows` values.
+2. A reminder of the hardware specs (8 vCores, 32 GB RAM, 600 GB NVMe).
+3. An explicit request for the user's permission before running the query with `ln_db_query.py`.
+
+Only run `ln_db_query.py` after the user grants explicit permission.
+
+Queries with `total_cost` ≤ 1,000,000 may proceed directly to `ln_db_query.py` without prompting.
 
 ---
 
@@ -139,24 +179,90 @@ Indexes: same pattern — pkey(gossip_id), unique(internal_id), type, first_seen
 
 Records which collector observed which gossip message, and when.
 
-| column             | type        | nullable |
-|--------------------|-------------|----------|
-| internal_id        | bigint      | YES      |
-| gossip_id          | varchar(64) | NO       |
-| collector_node_id  | varchar(66) | NO       |
-| seen_at            | timestamptz | YES      |
-| sender_timestamp   | timestamptz | YES      |
+**Rebuilt 2026-07-19** onto surrogate keys. `gossip_id` and `collector_node_id` are
+GONE from this table — writing to either is an error.
 
-Constraints: PK(gossip_id, collector_node_id), FK gossip_id → gossip_inventory(gossip_id) ON DELETE CASCADE NOT VALID.
+| column                | type        | nullable |
+|-----------------------|-------------|----------|
+| internal_id           | bigint      | NO       |
+| seen_at               | timestamptz | YES      |
+| sender_timestamp      | timestamptz | YES      |
+| internal_collector_id | smallint    | NO       |
+
+Constraints: PK(internal_id, internal_collector_id),
+FK internal_collector_id → collectors(internal_collector_id).
+
+Join back to content via `internal_id` → `gossip_inventory.internal_id`
+(or `channel_updates` / `node_announcements*.internal_id`), and to the collector
+via `internal_collector_id` → `collectors`.
 
 `seen_at` = wall-clock time the collector received the message.
 `sender_timestamp` = timestamp embedded in the gossip message by its originator.
 
-Indexes: PK, (internal_id, collector_node_id), collector_node_id,
-seen_at, sender_timestamp, (collector_node_id, seen_at, internal_id),
-internal_id.
+**95,503,734 rows; 7797 MB total** (was 18 GB heap + 38 GB indexes = 56 GB — an
+86% reduction). One index only: the PK.
 
-~95M rows.
+### Migration record (2026-07-19)
+
+Old shape was `PK(gossip_id varchar(64), collector_node_id varchar(66))` — those two
+65/67-byte hex strings were ~75% of every 175.7-byte tuple AND of the 26 GB PK,
+while `internal_id` already existed as an 8-byte surrogate for `gossip_id`.
+
+Done as `CREATE TABLE` + bulk `INSERT` + rename-swap, NOT `ALTER`/`UPDATE` — an
+in-place update of 95.5M rows would have hit the index write-amplification that made
+the `channel_updates` repair take 643 minutes. **The whole rebuild took 5.5 minutes.**
+Script: `analysis/migrate_observations_slim.sh`.
+
+The 20,547,521 rows with `internal_id IS NULL` were resolved *inline during the copy*
+by hash-joining `gossip_inventory` (`SET enable_nestloop=off` — a nested loop would
+be 20.5M random probes at ~4 MB/s and never finish), rather than as a separate
+backfill UPDATE. Reconciliation: 95,503,734 rows both sides, **0 dropped orphans**;
+`gossip_inventory_future` contributed 0 rows.
+
+Dropped in the rebuild (all had ~0 use): `idx_obs_collector_time` (9598 MB,
+31 scans), `idx_obs_internal_id` (1896 MB, 0 scans),
+`gossip_observations_sender_timestamp` (828 MB, 0 scans). Re-add only on evidence.
+
+`gossip_observations_old` retains the pre-migration table until dropped.
+
+#### Content policy (decided 2026-07-19)
+
+This table holds ONLY observations from the four own-platform collectors:
+`alice`, `alice-new`, `bob`, `bob-new`. Bulk-import rows do not belong here.
+9,954,765 artifact rows were deleted on 2026-07-19 (`0200…0000` "Gossip File
+Import", `0300…0000` "Minibolt Old Bulk import", `0200…bluematt` — the last not
+even present in `collectors`, where bluematt is `0400…0000`).
+
+**Identify artifact rows by `collector_node_id` against the `collectors` table** —
+that is the only sound test. The deletion above was done on that basis.
+
+**CORRECTION (2026-07-19):** an earlier version of this file claimed
+"real collectors always populate `sender_timestamp`, artifact rows never do."
+**That is false.** It was inferred from a sample of each collector's OLDEST rows.
+The newest row for *every* one of the four real collectors also has
+`sender_timestamp IS NULL` — the current `gossip-processor` never writes the
+column at all (see the writer-bugs note below). Do not use `sender_timestamp`
+to classify rows.
+
+The `seen_at` shape is still suggestive but not conclusive: artifact imports show
+millions of rows inside a minutes-long window (e.g. 9.38M rows in 3 minutes),
+because `seen_at` was set to the import wall-clock.
+
+Consequence: `analysis/observations.csv` must never be imported (deleted 2026-07-19).
+
+**Enumerating distinct collectors:** a plain `GROUP BY collector_node_id` costs
+~3M (trips the gate). Use a recursive skip scan over `idx_obs_collector_time`
+instead — it returns instantly:
+
+```sql
+WITH RECURSIVE t AS (
+  (SELECT collector_node_id AS c FROM gossip_observations ORDER BY collector_node_id LIMIT 1)
+  UNION ALL
+  SELECT (SELECT collector_node_id FROM gossip_observations
+          WHERE collector_node_id > t.c ORDER BY collector_node_id LIMIT 1)
+  FROM t WHERE t.c IS NOT NULL)
+SELECT c FROM t WHERE c IS NOT NULL;
+```
 
 ---
 
@@ -260,15 +366,33 @@ FK gossip_id → gossip_inventory(gossip_id) ON DELETE CASCADE.
 meaningful change vs the prior update). Distribution (71M rows):
 fee_update=true ~9.4M, topology_update=true ~19.7M, neither ~44M.
 
-Indexes: PK, (internal_id), (is_fee_update), (is_topology_update),
-(fee_proportional_millionths), (fee_base_msat, fee_proportional_millionths),
-`idx_chan_upd_history_order` (scid, direction, valid_from),
-`idx_chan_upd_lookup` (scid, direction, valid_to),
-`idx_chan_upd_validity` (valid_from DESC, valid_to),
-`idx_cu_clean_scid_dir_time` (scid, direction, valid_from),
-`idx_updates_flags` (scid, direction) WHERE is_fee_update OR is_topology_update.
+Indexes — **verified 2026-07-19, only 3 remain** after the remediation (the older
+8-index list above was dropped to make the bulk repair feasible and has NOT been
+fully rebuilt):
 
-~71M rows.
+| index | key | size |
+|---|---|---:|
+| `channel_updates_pkey` | (gossip_id) | 21 GB |
+| `channel_updates_scid_direction_valid_from` | (scid, direction, valid_from) | 5579 MB |
+| `channel_updates_valid_from_valid_to` | (valid_from, valid_to) | 3559 MB |
+| `channel_updates_internal_id` | (internal_id) | 3090 MB (rebuilt 2026-07-19) |
+| `idx_cu_active_head` | (scid, direction) **WHERE valid_to IS NULL** | 24 MB (added 2026-07-19) |
+
+**`idx_cu_active_head` is load-bearing for ingest — do not drop it.** The
+gossip-processor SCD close (`... WHERE scid=? AND direction=? AND valid_to IS NULL`)
+takes **34.6 seconds** without it (scanning 193K rows to find 1 on a busy channel)
+and **3.9 ms** with it. Its absence stalls the whole pipeline. The node tables have
+the equivalent `idx_nac_active_head` / `idx_na_active_head` on `(node_id) WHERE
+valid_to IS NULL`. See [[project-scd-active-head-indexes]].
+
+**144,207,373 rows; 117 GB heap + 30 GB indexes = 147 GB.** The heap is bloated —
+live data is ~73 GB of tuples (~80 GB as a fresh heap), so ~37 GB is reclaimable
+free space (only 76K dead tuples; already vacuumed). Correlation on
+`valid_from`/`valid_to` is ≈ −0.17, i.e. physically unordered.
+
+Remediated 2026-07-18: `internal_id` backfilled (59,838,108 rows), valid_to chain
+repaired (81,173,892 fixes), flags recomputed (18,001,610), trigger
+`trigger_classify_gossip` re-enabled. Verified: 0 partitions with >1 active head.
 
 ---
 
@@ -388,13 +512,89 @@ One row per gossip-collecting node operated for this research project.
 | last_collection_at      | timestamptz | YES      |                               |
 | total_messages_collected| bigint      | YES      | default 0                     |
 | notes                   | text        | YES      |                               |
+| internal_collector_id   | smallint    | NO       | UNIQUE, identity — see warning below |
 
-Currently 7 rows: `alice`, `bob`, `Gossip File Import`, `Minibolt Old Bulk import`,
-`bluematt` (bulk import from bitcoin.ninja/ln-replay-data), `bob-new`, `alice-new`.
-The `0x020...0`, `0x030...0`, `0x040...0` entries are synthetic IDs used for
-batch file imports, not real LN nodes.
+> **⚠️ `internal_collector_id` is a `smallint` IDENTITY — max 32767.**
+> PostgreSQL evaluates an identity default (`nextval()`) **before** it detects an
+> `ON CONFLICT` collision. So an `INSERT … ON CONFLICT DO UPDATE` on `collectors`
+> burns one sequence value **per call**, even when it always conflicts.
+> A per-message upsert therefore exhausts the sequence within minutes and every
+> subsequent transaction dies with
+> `nextval: reached maximum value of sequence … (32767)`.
+> **This took ingest down for 23 h on 2026-07-19/20.**
+> Never upsert `collectors` on the hot path — cache `node_id → internal_collector_id`
+> in-process and only INSERT on a genuine miss. Reset with
+> `ALTER TABLE collectors ALTER COLUMN internal_collector_id RESTART WITH <max+1>;`
+> (sequences are non-transactional — a rollback does *not* give the value back).
+
+Currently 7 rows (verified 2026-07-19):
+
+| alias | node_id | real collector? |
+|---|---|---|
+| alice | `023bcadd…58fe2` | yes |
+| alice-new | `02a877d7…c7a48a` | yes |
+| bob | `0332dfc4…a53d28` | yes |
+| bob-new | `03fc854f…c945c` | yes |
+| Gossip File Import | `020000…0000` | synthetic |
+| Minibolt Old Bulk import | `030000…0000` | synthetic |
+| bluematt | `040000…0000` | synthetic |
+
+The `0x020…0`, `0x030…0`, `0x040…0` entries are synthetic IDs used for batch file
+imports, not real LN nodes.
 
 PK(node_id). Indexes: (alias), (first_collection_at, last_collection_at).
+Referenced by `peer_sessions.collector_node_id`.
+
+---
+
+## Writer history: `gossip-processor/main.py`
+
+### FIXED in 0.10.0 (deployed 2026-07-19)
+
+Four defects found by auditing live data, all now repaired and verified in
+production (269 channel_updates written with 0 NULL `internal_id`):
+
+- `channel_updates.internal_id` was never written — `_handle_channel_update()`
+  neither accepted nor inserted it. Re-accrued the exact damage the 2026-07-18
+  remediation spent 7.7 h repairing (59,838,108 rows).
+- `channels.internal_id` was never written — same defect in
+  `_handle_channel_announcement()`.
+- `gossip_observations.sender_timestamp` was never written. **This is why
+  `sender_timestamp` must NOT be used to classify artifact rows** — the newest
+  row for all four real collectors had it NULL, so the "real collectors always
+  populate it" signature was false.
+- `insert_content()` discarded `internal_id` on the duplicate path.
+  `ON CONFLICT (gossip_id) DO NOTHING RETURNING internal_id` returns no row on
+  conflict, and duplicates are the majority path (every message is seen by
+  several collectors). The duplicate path must re-`SELECT` the id.
+
+Migration prompt for these: `analysis/gossip-processor-migration-prompt.md`.
+
+### FIXED in 0.10.1 (2026-07-20) — sequence exhaustion, 23 h outage
+
+0.10.0's `register_collector()` ran `INSERT … ON CONFLICT DO UPDATE … RETURNING`
+on **every message** to resolve `internal_collector_id`. Because identity defaults
+evaluate before conflict detection, this burned one `smallint` sequence value per
+message and jammed at 32767 (see the `collectors` warning above). Every batch then
+failed and rolled back — **193 consecutive failures, ingest dead from
+2026-07-19 10:27 to 2026-07-20 09:21.**
+
+The fix, in `Database`:
+- `_collector_ids` cache; `register_collector()` does cache → `SELECT` → INSERT
+  only on a genuine miss.
+- `_collector_ids_pending` holds ids created by the in-flight batch. They are
+  promoted to the cache by `commit_batch()` and discarded by `rollback_batch()` —
+  caching an id from a rolled-back transaction would pin a nonexistent id and
+  cause FK violations on every subsequent batch.
+- `total_messages_collected` is accumulated in memory and folded into one UPDATE
+  per collector by `flush_collector_stats()`. This also removed ~200 row-lock
+  acquisitions per transaction on a 7-row table.
+- `db_worker` now tracks how many messages it actually processed, so the failure
+  path no longer double-calls `queue.task_done()`.
+
+**Lesson worth generalising:** any per-message `ON CONFLICT` upsert against a
+table with an identity/serial column is a sequence-consumption bug waiting to
+happen, regardless of column width. Cache, or read-before-write.
 
 ---
 
@@ -500,7 +700,9 @@ gossip_inventory ◄── channels.gossip_id          (ON DELETE CASCADE NOT VA
 gossip_inventory ◄── channel_updates.gossip_id   (ON DELETE CASCADE)
 gossip_inventory ◄── node_announcements.gossip_id (ON DELETE CASCADE)
 gossip_inventory ◄── node_announcements_complete.gossip_id (ON DELETE CASCADE)
-gossip_inventory ◄── gossip_observations.gossip_id (ON DELETE CASCADE NOT VALID)
+collectors ◄── gossip_observations.internal_collector_id   (added 2026-07-19)
+   note: gossip_observations no longer has gossip_id / collector_node_id, so its
+   old FK to gossip_inventory is GONE. Join via internal_id (no FK enforces it).
 
 nodes ◄── channels.source_node_id
 nodes ◄── channels.target_node_id
