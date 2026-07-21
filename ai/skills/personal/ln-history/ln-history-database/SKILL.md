@@ -31,6 +31,32 @@ set -a && . ./.env.migration && set +a && docker exec -e PGPASSWORD="$DB_PASSWOR
   ln-history-database psql -U "$DB_USER" -d "$DB_NAME" -c "..."
 ```
 
+Full-access credentials also live in `/home/bitcoin/ln-history-research/.env`
+(`POSTGRES_USER=admin`, `POSTGRES_PASSWORD`, `POSTGRES_URI`).
+
+### ⚠️ Rename-swap migrations silently drop grants
+
+Grants are attached to the table's OID, not its name. The
+`CREATE TABLE new` → `DROP/rename old` → `rename new` pattern used throughout this
+database therefore produces a table that **no non-owner role can read**, and nothing
+warns you — the failure surfaces later as `permission denied for table X` from
+`ai_reader`, Grafana, or the API.
+
+This happened to `node_addresses` on 2026-07-21: the new table came up with
+`{admin, grafanareader}` while the retained `node_addresses_old` still had
+`{admin, grafanareader, ai_reader}`. Read-only access was broken for a day.
+
+**After every rename-swap, re-apply grants and diff them against the old table:**
+
+```sql
+SELECT relname, relacl FROM pg_class WHERE relname IN ('X', 'X_old');
+GRANT SELECT ON X TO ai_reader;   -- plus grafanareader, and any other reader role
+```
+
+The same applies to constraint/index names: they follow the OID too, so a swapped-in
+table keeps its `*_new_*` names until explicitly renamed (which can only happen after
+the old table is dropped, since the canonical names are still occupied by it).
+
 ---
 
 ## Hardware-Aware Query Protocol
@@ -39,7 +65,7 @@ The database runs on a VPS with **8 AMD EPYC vCores, 32 GB ECC RAM, and a 600 GB
 
 ### The Golden Rule
 
-Before using `ln_db_query.py` for any complex query — aggregations, joins, or queries that touch large tables (`gossip_observations` ~95.5M rows / 56 GB, `channel_updates` ~144M rows / 147 GB, `node_announcements_complete` ~26M rows, `node_addresses` ~66M rows, etc.) — you **MUST** first run the query through `ln_db_explain.py`.
+Before using `ln_db_query.py` for any complex query — aggregations, joins, or queries that touch large tables (`gossip_observations` ~95.5M rows / 56 GB, `channel_updates` ~144M rows / 147 GB, `node_announcements_complete` ~26M rows, `node_addresses` ~75.9M rows / 17 GB, etc.) — you **MUST** first run the query through `ln_db_explain.py`.
 
 Run the explain tool using the project venv:
 
@@ -76,8 +102,13 @@ little-endian encoded. Example header for a 430-byte channel_announcement:
 
 **`internal_id`** — `bigint`, auto-incremented from the shared sequence
 `gossip_inventory_internal_id_seq`. Assigned at first ingest. Used in
-`gossip_observations` and in `channel_updates`/`node_announcements` to join
-back to the inventory without repeating `gossip_id`.
+`gossip_observations`, `channels`, `channel_updates`, `node_announcements*` and
+`node_addresses` to join back to the inventory without repeating `gossip_id`.
+**Prefer it over `gossip_id` for joins** — an 8-byte integer comparison against a
+65-byte hex string. On most tables `gossip_id` is the PK and so is at least indexed;
+on `node_addresses` it is **not** indexed at all. Measured 2026-07-21: the full
+"addresses of a node's current announcement" query costs **10,664** via
+`internal_id`, against ~1.96M for the `gossip_id` equivalent.
 
 **`scid`** — `bigint`, short channel ID encoded as a single 64-bit integer
 (standard LN encoding: block_height « 40 | tx_index « 16 | output_index).
@@ -115,7 +146,7 @@ gossip received by collector node
   gossip_inventory        ← one row per unique gossip_id
   (+ gossip_inventory_future for future-timestamped msgs)
         │
-        ├──► gossip_observations  ← (gossip_id, collector_node_id) — who saw it, when
+        ├──► gossip_observations  ← (internal_id, internal_collector_id) — who saw it, when
         │
         ├──► channels             ← type 256, one row per channel (scid)
         │       └──► channel_closures  ← on-chain close detected
@@ -233,8 +264,10 @@ This table holds ONLY observations from the four own-platform collectors:
 Import", `0300…0000` "Minibolt Old Bulk import", `0200…bluematt` — the last not
 even present in `collectors`, where bluematt is `0400…0000`).
 
-**Identify artifact rows by `collector_node_id` against the `collectors` table** —
-that is the only sound test. The deletion above was done on that basis.
+**Identify artifact rows by which collector they belong to, resolved against the
+`collectors` table** — that is the only sound test. The 2026-07-19 deletion was done
+on that basis, using `collector_node_id`; since the rebuild dropped that column, the
+equivalent test today is `internal_collector_id` joined to `collectors`.
 
 **CORRECTION (2026-07-19):** an earlier version of this file claimed
 "real collectors always populate `sender_timestamp`, artifact rows never do."
@@ -250,19 +283,32 @@ because `seen_at` was set to the import wall-clock.
 
 Consequence: `analysis/observations.csv` must never be imported (deleted 2026-07-19).
 
-**Enumerating distinct collectors:** a plain `GROUP BY collector_node_id` costs
-~3M (trips the gate). Use a recursive skip scan over `idx_obs_collector_time`
-instead — it returns instantly:
+**Enumerating distinct collectors:** just read `collectors` — it is the authoritative
+7-row list, and `gossip_observations.internal_collector_id` is an FK to it. Do not
+aggregate over the 95.5M-row observations table for this.
+
+> **Superseded:** earlier versions of this file recommended a recursive skip scan over
+> `idx_obs_collector_time` on `gossip_observations.collector_node_id`. **Both the
+> column and that index were removed in the 2026-07-19 rebuild** — that query now
+> errors. Kept here only so the old advice is recognisably dead.
+
+**The skip-scan trick itself is still useful**, just not on that column: to enumerate
+the distinct values of a low-cardinality indexed column without scanning the table,
+recurse on `> previous` with `LIMIT 1`. This is how the 5 distinct `type_id` values in
+the 75.9M-row `node_addresses` were confirmed instantly before validating its FK:
 
 ```sql
 WITH RECURSIVE t AS (
-  (SELECT collector_node_id AS c FROM gossip_observations ORDER BY collector_node_id LIMIT 1)
+  (SELECT type_id AS v FROM node_addresses ORDER BY type_id LIMIT 1)
   UNION ALL
-  SELECT (SELECT collector_node_id FROM gossip_observations
-          WHERE collector_node_id > t.c ORDER BY collector_node_id LIMIT 1)
-  FROM t WHERE t.c IS NOT NULL)
-SELECT c FROM t WHERE c IS NOT NULL;
+  SELECT (SELECT n.type_id FROM node_addresses n
+          WHERE n.type_id > t.v ORDER BY n.type_id LIMIT 1)
+  FROM t WHERE t.v IS NOT NULL)
+SELECT v FROM t WHERE v IS NOT NULL;
 ```
+
+(Note it skips NULLs — `> t.v` excludes them — which is usually what you want for an
+FK pre-check, since NULLs never violate a `MATCH SIMPLE` foreign key.)
 
 ---
 
@@ -454,19 +500,40 @@ Indexes: PK(gossip_id), (internal_id),
 
 Network addresses extracted from node announcements. Multiple rows per announcement.
 
-| column   | type        | nullable | notes                          |
-|----------|-------------|----------|--------------------------------|
-| id       | bigint      | NO       | PK, auto-increment             |
-| gossip_id| varchar(64) | YES      | → gossip_inventory or node_ann |
-| type_id  | integer     | YES      | FK → address_types(id)         |
-| address  | varchar(255)| YES      |                                |
-| port     | integer     | YES      |                                |
+| column     | type        | nullable | notes                              |
+|------------|-------------|----------|------------------------------------|
+| id         | bigint      | NO       | PK, auto-increment                 |
+| gossip_id  | varchar(64) | YES      | → gossip_inventory or node_ann     |
+| type_id    | integer     | YES      | FK → address_types(id)             |
+| address    | varchar(255)| YES      |                                    |
+| port       | integer     | YES      |                                    |
+| internal_id| bigint      | YES      | → gossip_inventory.internal_id     |
 
-FK: type_id → address_types(id).
+Constraints: PK(id), FK type_id → address_types(id) — **VALIDATED 2026-07-21**
+(7.6 s; all 5 distinct `type_id` values resolve).
 
-Indexes: PK(id), (type_id), (port), `idx_addr_lookup` (address).
+Indexes: `node_addresses_pkey` (id), `idx_addr_lookup` (address),
+`idx_node_addresses_internal_id` (internal_id), `node_addresses_port` (port),
+`node_addresses_type_id` (type_id).
 
-~66M rows.
+**75.9M rows; 13 GB heap + 4119 MB indexes = 17 GB.**
+
+**Join addresses by `internal_id`, not `gossip_id`.** The `internal_id` column was
+added 2026-07-21 precisely for this. `node_addresses.gossip_id` has **no index**, so
+joining on it costs ~1.96M per lookup — over the gate. The query below was measured
+at **10,664** on 2026-07-21.
+
+```sql
+SELECT na.* FROM node_addresses na
+JOIN node_announcements_complete c ON c.internal_id = na.internal_id
+WHERE c.node_id = '<node_id>' AND c.valid_to IS NULL;
+```
+
+`internal_id` is NOT NULL in practice (0 NULLs verified 2026-07-21) but the column is
+nullable — the writer omitted it until gossip-processor 0.10.2, so any future NULLs
+mean a writer regression. Check with
+`SELECT count(*) FROM node_addresses WHERE internal_id IS NULL` — cheap, since the
+index covers NULLs (cost ~7).
 
 ---
 
@@ -596,6 +663,30 @@ The fix, in `Database`:
 table with an identity/serial column is a sequence-consumption bug waiting to
 happen, regardless of column width. Cache, or read-before-write.
 
+### FIXED in 0.10.2 (deployed 2026-07-21) — `node_addresses.internal_id`
+
+Same class as the 0.10.0 omissions: `insert_node_addresses()` had the announcement's
+`internal_id` available in the caller but wrote only
+`(gossip_id, type_id, address, port)`, so every address row ingested after the
+2026-07-21 migration was invisible to the API's `internal_id` join.
+
+Fix: `insert_node_addresses()` now takes a required `internal_id` and writes it;
+all three call sites in `_handle_node_announcement()` pass it (the normal path, the
+defensive gossip_id-conflict path, and the timestamp-collision path — all three must
+pass it, since addresses are written on every one of them).
+
+Backfilled in two passes (`UPDATE … FROM gossip_inventory WHERE internal_id IS NULL`):
+7,098 rows pre-deploy, then 1,461 more that accrued between the first backfill and the
+deploy. Post-deploy rows verified: 0 NULL. **When backfilling a table the live writer
+is still appending to, expect a second pass — and take the NULL count *after* the
+cutover, not before.**
+
+**The recurring defect in this writer is a new surrogate key not being threaded into
+every insert path.** It has now happened four times (`channels`, `channel_updates`,
+`gossip_observations.sender_timestamp`, `node_addresses`). When adding an
+`internal_id`-style column, grep every INSERT against that table and check each
+early-`return` branch in the handler.
+
 ---
 
 ### `observed_peers`
@@ -693,8 +784,10 @@ All sequences increment by 1.
 ## Foreign key graph
 
 ```
-address_types ◄── node_addresses.type_id
+address_types ◄── node_addresses.type_id         (VALIDATED 2026-07-21)
 address_types ◄── peer_addresses.type_id
+   note: node_addresses.internal_id → gossip_inventory.internal_id is the intended
+   join for addresses, but no FK enforces it.
 
 gossip_inventory ◄── channels.gossip_id          (ON DELETE CASCADE NOT VALID)
 gossip_inventory ◄── channel_updates.gossip_id   (ON DELETE CASCADE)
@@ -717,3 +810,12 @@ peer_sessions ◄── peer_addresses.session_id      (ON DELETE CASCADE)
 
 Note: `NOT VALID` FKs were created without verifying existing data.
 They enforce future inserts but pre-existing rows may violate them.
+**Still NOT VALID as of 2026-07-21** (verified against `pg_constraint`):
+`channels_gossip_id_fkey` and `channel_closures_gossip_id_fkey`. Every other FK in
+the database is validated.
+
+Validating is cheaper than it looks when the referenced table is small and cached —
+`node_addresses_type_id_fkey` took **7.6 s over 75.9M rows**, and
+`ALTER TABLE … VALIDATE CONSTRAINT` takes only SHARE UPDATE EXCLUSIVE, so ingest
+keeps writing throughout. Enumerate the distinct child values first (skip scan over
+the FK column's index) to confirm it will succeed before starting.
