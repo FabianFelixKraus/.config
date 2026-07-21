@@ -27,6 +27,10 @@ case ":$PATH:" in
 *) export PATH="$PNPM_HOME:$PATH" ;;
 esac
 
+# Tailscale
+
+export PATH="/usr/bin/local/tailscale:$PATH"
+
 # =============================================================================
 # 2. TOOL INITIALIZATIONS
 # =============================================================================
