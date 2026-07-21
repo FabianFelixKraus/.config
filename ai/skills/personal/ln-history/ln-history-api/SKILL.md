@@ -164,7 +164,7 @@ open-channel-restricted LATERAL is both correct and cheaper for every timestamp.
 - **`BitcoinRpcClient`** (typed `HttpClient`, HTTP Basic auth, `System.Text.Json`) bound
   to the **`Bitcoind`** config section (`RPCHost/RPCPort/RPCUser/RPCPassword`). Methods:
   `getblockcount`, `getblockhash`, `getblockstats` (one call yields every `BlockDto`
-  field: `blockhash/height/time/total_size/subsidy/totalfee`), `getrawtransaction`.
+  field: `blockhash/height/time/total_size/subsidy/totalfee/txs`), `getrawtransaction`.
   Not-found RPC codes `-8`/`-5` map to `null`; `getblockstats(height, ["time"])` used for
   cheap probes.
 - **`BlockDataStore`** — `GetByHeightAsync`, `GetByHashAsync`, `GetByTimestampAsync`
@@ -249,6 +249,22 @@ Controller discovery: the Api is a class library, so `Program.cs` does
 
 `SimpleApiKeyMiddleware` checks `x-api-key` against config `ApiKey`, returns ProblemDetails
 on 401, skips `/swagger`. Gated by `ApiKeyMiddleware:Enabled` (false in Development).
+
+## Versioning & container image
+
+Single source of truth is **`Directory.Build.props`** at the repo root: `<TargetFramework>`
+(the .NET version), `<Version>` (the app version, inherited by every project — no per-project
+`<TargetFramework>`/`<Version>`), and `<DockerImageRepository>`.
+
+Release flow uses **commitizen** (`.cz.toml`, conventional commits):
+```bash
+cz bump                 # computes next version from commits, updates .cz.toml +
+                        # Directory.Build.props <Version>, writes CHANGELOG, tags (tag == version)
+git push --follow-tags
+./scripts/build-image.sh   # docker buildx build --push, tagged with that <Version> (+ :latest)
+```
+`tag_format = "$version"` so the git tag equals the Docker tag. First-time only: no tag exists
+yet, so run `cz bump --yes` (or `git tag <version>` once) to establish the baseline.
 
 ## Configuration (`appsettings[.Development].json`)
 
