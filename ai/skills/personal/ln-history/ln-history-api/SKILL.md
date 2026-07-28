@@ -208,6 +208,7 @@ accept both the integer and the `"865123x1x0"` forms. Validated against a real s
 | Channel | `GET channels/{scid}?nodeInformation&raw_gossip&timestamp` | `{scid}` = int or `"865123x1x0"`; ChannelDto |
 | Channel | `GET channels?timestamp&limit&offset` | no ts=all, `now`=open, T=open-at-T; PagedResult, no fee_policies |
 | Channel | `GET channels/{scid}/history?raw&timestamp` | raw=true octet-stream; raw=false `ChannelUpdateDto[]` (by valid_from) |
+| Channel | `GET channels/capacities?timestamp` | `ChannelCapacityDto[]` (scid, scid_str, capacity_sat) for channels open at T (no ts=all, now=currently open). Lightweight companion to `snapshot` for graph building — channel_announcement gossip has no capacity. Literal route wins over `{scid}`. |
 | Node | `GET nodes/{node_id}?raw_gossip&timestamp&channelCount=open\|all` | NodeDto (current announcement) |
 | Node | `GET nodes?timestamp&limit&offset` | PagedResult<NodeDto> |
 | Node | `GET nodes/{node_id}/history?raw&timestamp` | raw=true octet-stream; raw=false NodeDto+full chain |

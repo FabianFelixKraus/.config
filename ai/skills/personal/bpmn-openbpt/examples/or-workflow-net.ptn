@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ptn:definitions xmlns:dc="https://www.omg.org/spec/BPMN/20100501/DC.xsd" xmlns:ptn="http://bpt-lab.org/schemas/ptn" xmlns:ptnDi="http://bpt-lab.org/schemas/ptnDi" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="defs_1" exporter="petrinet_builder" exporterVersion="1">
+  <ptn:model id="model_1">
+    <ptn:name>OR gateway - workflow net</ptn:name>
+    <ptn:place id="p_i">
+      <ptn:name>i</ptn:name>
+      <ptn:initialMarking>1</ptn:initialMarking>
+    </ptn:place>
+    <ptn:transition id="t_assess">
+      <ptn:name>Assess order</ptn:name>
+    </ptn:transition>
+    <ptn:place id="p2">
+      <ptn:name>p2</ptn:name>
+    </ptn:place>
+    <ptn:transition id="t_tauR" isSilent="true">
+      <ptn:name>reserve only</ptn:name>
+    </ptn:transition>
+    <ptn:place id="p_r1">
+      <ptn:name>reserve chosen</ptn:name>
+    </ptn:place>
+    <ptn:transition id="t_res1">
+      <ptn:name>Reserve stock</ptn:name>
+    </ptn:transition>
+    <ptn:transition id="t_tauD" isSilent="true">
+      <ptn:name>deliver only</ptn:name>
+    </ptn:transition>
+    <ptn:place id="p_d1">
+      <ptn:name>deliver chosen</ptn:name>
+    </ptn:place>
+    <ptn:transition id="t_del1">
+      <ptn:name>Arrange delivery</ptn:name>
+    </ptn:transition>
+    <ptn:transition id="t_tauRD" isSilent="true">
+      <ptn:name>both (fork)</ptn:name>
+    </ptn:transition>
+    <ptn:place id="p_r1b">
+      <ptn:name>reserve chosen</ptn:name>
+    </ptn:place>
+    <ptn:place id="p_d1b">
+      <ptn:name>deliver chosen</ptn:name>
+    </ptn:place>
+    <ptn:transition id="t_res2">
+      <ptn:name>Reserve stock</ptn:name>
+    </ptn:transition>
+    <ptn:transition id="t_del2">
+      <ptn:name>Arrange delivery</ptn:name>
+    </ptn:transition>
+    <ptn:place id="p_r2b">
+      <ptn:name>reserved</ptn:name>
+    </ptn:place>
+    <ptn:place id="p_d2b">
+      <ptn:name>delivered</ptn:name>
+    </ptn:place>
+    <ptn:transition id="t_sync" isSilent="true">
+      <ptn:name>sync (join)</ptn:name>
+    </ptn:transition>
+    <ptn:place id="p_pj">
+      <ptn:name>pj</ptn:name>
+    </ptn:place>
+    <ptn:transition id="t_confirm">
+      <ptn:name>Confirm</ptn:name>
+    </ptn:transition>
+    <ptn:place id="p_o">
+      <ptn:name>o</ptn:name>
+    </ptn:place>
+    <ptn:arc id="a1" source="p_i" target="t_assess"/>
+    <ptn:arc id="a2" source="t_assess" target="p2"/>
+    <ptn:arc id="a3" source="p2" target="t_tauR"/>
+    <ptn:arc id="a4" source="t_tauR" target="p_r1"/>
+    <ptn:arc id="a5" source="p_r1" target="t_res1"/>
+    <ptn:arc id="a6" source="t_res1" target="p_pj"/>
+    <ptn:arc id="a7" source="p2" target="t_tauD"/>
+    <ptn:arc id="a8" source="t_tauD" target="p_d1"/>
+    <ptn:arc id="a9" source="p_d1" target="t_del1"/>
+    <ptn:arc id="a10" source="t_del1" target="p_pj"/>
+    <ptn:arc id="a11" source="p2" target="t_tauRD"/>
+    <ptn:arc id="a12" source="t_tauRD" target="p_r1b"/>
+    <ptn:arc id="a13" source="t_tauRD" target="p_d1b"/>
+    <ptn:arc id="a14" source="p_r1b" target="t_res2"/>
+    <ptn:arc id="a15" source="t_res2" target="p_r2b"/>
+    <ptn:arc id="a16" source="p_d1b" target="t_del2"/>
+    <ptn:arc id="a17" source="t_del2" target="p_d2b"/>
+    <ptn:arc id="a18" source="p_r2b" target="t_sync"/>
+    <ptn:arc id="a19" source="p_d2b" target="t_sync"/>
+    <ptn:arc id="a20" source="t_sync" target="p_pj"/>
+    <ptn:arc id="a21" source="p_pj" target="t_confirm"/>
+    <ptn:arc id="a22" source="t_confirm" target="p_o"/>
+  </ptn:model>
+  <ptnDi:diagram id="model_1_di">
+    <ptnDi:plane id="model_1_plane" modelElement="model_1">
+      <ptnDi:diagramShape id="p_i_di" modelElement="p_i">
+        <dc:Bounds x="60" y="282" width="36" height="36"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="t_assess_di" modelElement="t_assess">
+        <dc:Bounds x="147" y="284" width="46" height="32"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="p2_di" modelElement="p2">
+        <dc:Bounds x="244" y="282" width="36" height="36"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="t_tauR_di" modelElement="t_tauR">
+        <dc:Bounds x="337" y="134" width="46" height="32"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="p_r1_di" modelElement="p_r1">
+        <dc:Bounds x="452" y="132" width="36" height="36"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="t_res1_di" modelElement="t_res1">
+        <dc:Bounds x="557" y="134" width="46" height="32"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="t_tauD_di" modelElement="t_tauD">
+        <dc:Bounds x="337" y="434" width="46" height="32"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="p_d1_di" modelElement="p_d1">
+        <dc:Bounds x="452" y="432" width="36" height="36"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="t_del1_di" modelElement="t_del1">
+        <dc:Bounds x="557" y="434" width="46" height="32"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="t_tauRD_di" modelElement="t_tauRD">
+        <dc:Bounds x="337" y="284" width="46" height="32"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="p_r1b_di" modelElement="p_r1b">
+        <dc:Bounds x="452" y="232" width="36" height="36"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="p_d1b_di" modelElement="p_d1b">
+        <dc:Bounds x="452" y="332" width="36" height="36"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="t_res2_di" modelElement="t_res2">
+        <dc:Bounds x="557" y="234" width="46" height="32"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="t_del2_di" modelElement="t_del2">
+        <dc:Bounds x="557" y="334" width="46" height="32"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="p_r2b_di" modelElement="p_r2b">
+        <dc:Bounds x="672" y="232" width="36" height="36"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="p_d2b_di" modelElement="p_d2b">
+        <dc:Bounds x="672" y="332" width="36" height="36"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="t_sync_di" modelElement="t_sync">
+        <dc:Bounds x="777" y="284" width="46" height="32"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="p_pj_di" modelElement="p_pj">
+        <dc:Bounds x="882" y="282" width="36" height="36"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="t_confirm_di" modelElement="t_confirm">
+        <dc:Bounds x="969" y="284" width="46" height="32"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="p_o_di" modelElement="p_o">
+        <dc:Bounds x="1066" y="282" width="36" height="36"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramEdge id="a1_di" modelElement="a1" sourceElement="p_i" targetElement="t_assess">
+        <ptnDi:waypoint x="96" y="300" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="147" y="300" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a2_di" modelElement="a2" sourceElement="t_assess" targetElement="p2">
+        <ptnDi:waypoint x="193" y="300" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="244" y="300" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a3_di" modelElement="a3" sourceElement="p2" targetElement="t_tauR">
+        <ptnDi:waypoint x="274" y="282" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="350" y="166" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a4_di" modelElement="a4" sourceElement="t_tauR" targetElement="p_r1">
+        <ptnDi:waypoint x="383" y="150" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="452" y="150" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a5_di" modelElement="a5" sourceElement="p_r1" targetElement="t_res1">
+        <ptnDi:waypoint x="488" y="150" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="557" y="150" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a6_di" modelElement="a6" sourceElement="t_res1" targetElement="p_pj">
+        <ptnDi:waypoint x="603" y="161" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="882" y="292" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a7_di" modelElement="a7" sourceElement="p2" targetElement="t_tauD">
+        <ptnDi:waypoint x="274" y="318" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="350" y="434" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a8_di" modelElement="a8" sourceElement="t_tauD" targetElement="p_d1">
+        <ptnDi:waypoint x="383" y="450" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="452" y="450" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a9_di" modelElement="a9" sourceElement="p_d1" targetElement="t_del1">
+        <ptnDi:waypoint x="488" y="450" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="557" y="450" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a10_di" modelElement="a10" sourceElement="t_del1" targetElement="p_pj">
+        <ptnDi:waypoint x="603" y="439" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="882" y="308" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a11_di" modelElement="a11" sourceElement="p2" targetElement="t_tauRD">
+        <ptnDi:waypoint x="280" y="300" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="337" y="300" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a12_di" modelElement="a12" sourceElement="t_tauRD" targetElement="p_r1b">
+        <ptnDi:waypoint x="383" y="290" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="452" y="258" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a13_di" modelElement="a13" sourceElement="t_tauRD" targetElement="p_d1b">
+        <ptnDi:waypoint x="383" y="310" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="452" y="342" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a14_di" modelElement="a14" sourceElement="p_r1b" targetElement="t_res2">
+        <ptnDi:waypoint x="488" y="250" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="557" y="250" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a15_di" modelElement="a15" sourceElement="t_res2" targetElement="p_r2b">
+        <ptnDi:waypoint x="603" y="250" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="672" y="250" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a16_di" modelElement="a16" sourceElement="p_d1b" targetElement="t_del2">
+        <ptnDi:waypoint x="488" y="350" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="557" y="350" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a17_di" modelElement="a17" sourceElement="t_del2" targetElement="p_d2b">
+        <ptnDi:waypoint x="603" y="350" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="672" y="350" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a18_di" modelElement="a18" sourceElement="p_r2b" targetElement="t_sync">
+        <ptnDi:waypoint x="708" y="258" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="777" y="290" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a19_di" modelElement="a19" sourceElement="p_d2b" targetElement="t_sync">
+        <ptnDi:waypoint x="708" y="342" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="777" y="310" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a20_di" modelElement="a20" sourceElement="t_sync" targetElement="p_pj">
+        <ptnDi:waypoint x="823" y="300" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="882" y="300" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a21_di" modelElement="a21" sourceElement="p_pj" targetElement="t_confirm">
+        <ptnDi:waypoint x="918" y="300" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="969" y="300" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a22_di" modelElement="a22" sourceElement="t_confirm" targetElement="p_o">
+        <ptnDi:waypoint x="1015" y="300" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="1066" y="300" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+    </ptnDi:plane>
+  </ptnDi:diagram>
+</ptn:definitions>

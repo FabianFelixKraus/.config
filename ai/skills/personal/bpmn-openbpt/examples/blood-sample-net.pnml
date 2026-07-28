@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8"?>
+<pnml xmlns="http://www.pnml.org/version-2009/grammar/pnml">
+  <net id="net_1" type="http://www.pnml.org/version-2009/grammar/ptnet">
+    <name>
+      <text>Blood-sample lab process (weighted P/T net)</text>
+    </name>
+    <page id="page1">
+      <place id="p_arrived">
+        <name>
+          <text>patient arrived</text>
+        </name>
+        <graphics>
+          <position x="80" y="200"/>
+        </graphics>
+        <initialMarking>
+          <text>10</text>
+        </initialMarking>
+      </place>
+      <transition id="t_draw">
+        <name>
+          <text>Draw blood &amp; send</text>
+        </name>
+        <graphics>
+          <position x="185" y="200"/>
+        </graphics>
+      </transition>
+      <place id="p_lab">
+        <name>
+          <text>sample at lab</text>
+        </name>
+        <graphics>
+          <position x="300" y="200"/>
+        </graphics>
+      </place>
+      <transition id="t_start">
+        <name>
+          <text>Place 5 &amp; start centrifuge</text>
+        </name>
+        <graphics>
+          <position x="420" y="200"/>
+        </graphics>
+      </transition>
+      <place id="p_run">
+        <name>
+          <text>centrifuging</text>
+        </name>
+        <graphics>
+          <position x="555" y="200"/>
+        </graphics>
+      </place>
+      <transition id="t_out">
+        <name>
+          <text>Take samples out</text>
+        </name>
+        <graphics>
+          <position x="670" y="200"/>
+        </graphics>
+      </transition>
+      <place id="p_cent">
+        <name>
+          <text>centrifuged</text>
+        </name>
+        <graphics>
+          <position x="800" y="200"/>
+        </graphics>
+      </place>
+      <transition id="t_analyze">
+        <name>
+          <text>Analyze sample</text>
+        </name>
+        <graphics>
+          <position x="910" y="200"/>
+        </graphics>
+      </transition>
+      <place id="p_ana">
+        <name>
+          <text>analyzed</text>
+        </name>
+        <graphics>
+          <position x="1020" y="200"/>
+        </graphics>
+      </place>
+      <transition id="t_ok">
+        <name>
+          <text>Send results</text>
+        </name>
+        <graphics>
+          <position x="1130" y="130"/>
+        </graphics>
+      </transition>
+      <transition id="t_err">
+        <name>
+          <text>Send error notification</text>
+        </name>
+        <graphics>
+          <position x="1130" y="270"/>
+        </graphics>
+      </transition>
+      <place id="p_done">
+        <name>
+          <text>terminated</text>
+        </name>
+        <graphics>
+          <position x="1260" y="200"/>
+        </graphics>
+      </place>
+      <place id="p_cf">
+        <name>
+          <text>centrifuges available</text>
+        </name>
+        <graphics>
+          <position x="545" y="360"/>
+        </graphics>
+        <initialMarking>
+          <text>2</text>
+        </initialMarking>
+      </place>
+      <arc id="a1" source="p_arrived" target="t_draw"/>
+      <arc id="a2" source="t_draw" target="p_lab"/>
+      <arc id="a3" source="p_lab" target="t_start">
+        <inscription>
+          <text>5</text>
+        </inscription>
+      </arc>
+      <arc id="a4" source="p_cf" target="t_start"/>
+      <arc id="a5" source="t_start" target="p_run"/>
+      <arc id="a6" source="p_run" target="t_out"/>
+      <arc id="a7" source="t_out" target="p_cent">
+        <inscription>
+          <text>5</text>
+        </inscription>
+      </arc>
+      <arc id="a8" source="t_out" target="p_cf"/>
+      <arc id="a9" source="p_cent" target="t_analyze"/>
+      <arc id="a10" source="t_analyze" target="p_ana"/>
+      <arc id="a11" source="p_ana" target="t_ok"/>
+      <arc id="a12" source="p_ana" target="t_err"/>
+      <arc id="a13" source="t_ok" target="p_done"/>
+      <arc id="a14" source="t_err" target="p_done"/>
+    </page>
+  </net>
+</pnml>

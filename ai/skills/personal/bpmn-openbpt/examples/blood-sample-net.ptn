@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ptn:definitions xmlns:dc="https://www.omg.org/spec/BPMN/20100501/DC.xsd" xmlns:ptn="http://bpt-lab.org/schemas/ptn" xmlns:ptnDi="http://bpt-lab.org/schemas/ptnDi" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="defs_1" exporter="petrinet_builder" exporterVersion="1">
+  <ptn:model id="model_1">
+    <ptn:name>Blood-sample lab process (weighted P/T net)</ptn:name>
+    <ptn:place id="p_arrived">
+      <ptn:name>patient arrived</ptn:name>
+      <ptn:initialMarking>10</ptn:initialMarking>
+    </ptn:place>
+    <ptn:transition id="t_draw">
+      <ptn:name>Draw blood &amp; send</ptn:name>
+    </ptn:transition>
+    <ptn:place id="p_lab">
+      <ptn:name>sample at lab</ptn:name>
+    </ptn:place>
+    <ptn:transition id="t_start">
+      <ptn:name>Place 5 &amp; start centrifuge</ptn:name>
+    </ptn:transition>
+    <ptn:place id="p_run">
+      <ptn:name>centrifuging</ptn:name>
+    </ptn:place>
+    <ptn:transition id="t_out">
+      <ptn:name>Take samples out</ptn:name>
+    </ptn:transition>
+    <ptn:place id="p_cent">
+      <ptn:name>centrifuged</ptn:name>
+    </ptn:place>
+    <ptn:transition id="t_analyze">
+      <ptn:name>Analyze sample</ptn:name>
+    </ptn:transition>
+    <ptn:place id="p_ana">
+      <ptn:name>analyzed</ptn:name>
+    </ptn:place>
+    <ptn:transition id="t_ok">
+      <ptn:name>Send results</ptn:name>
+    </ptn:transition>
+    <ptn:transition id="t_err">
+      <ptn:name>Send error notification</ptn:name>
+    </ptn:transition>
+    <ptn:place id="p_done">
+      <ptn:name>terminated</ptn:name>
+    </ptn:place>
+    <ptn:place id="p_cf">
+      <ptn:name>centrifuges available</ptn:name>
+      <ptn:initialMarking>2</ptn:initialMarking>
+    </ptn:place>
+    <ptn:arc id="a1" source="p_arrived" target="t_draw"/>
+    <ptn:arc id="a2" source="t_draw" target="p_lab"/>
+    <ptn:arc id="a3" source="p_lab" target="t_start">
+      <ptn:inscription>5</ptn:inscription>
+    </ptn:arc>
+    <ptn:arc id="a4" source="p_cf" target="t_start"/>
+    <ptn:arc id="a5" source="t_start" target="p_run"/>
+    <ptn:arc id="a6" source="p_run" target="t_out"/>
+    <ptn:arc id="a7" source="t_out" target="p_cent">
+      <ptn:inscription>5</ptn:inscription>
+    </ptn:arc>
+    <ptn:arc id="a8" source="t_out" target="p_cf"/>
+    <ptn:arc id="a9" source="p_cent" target="t_analyze"/>
+    <ptn:arc id="a10" source="t_analyze" target="p_ana"/>
+    <ptn:arc id="a11" source="p_ana" target="t_ok"/>
+    <ptn:arc id="a12" source="p_ana" target="t_err"/>
+    <ptn:arc id="a13" source="t_ok" target="p_done"/>
+    <ptn:arc id="a14" source="t_err" target="p_done"/>
+  </ptn:model>
+  <ptnDi:diagram id="model_1_di">
+    <ptnDi:plane id="model_1_plane" modelElement="model_1">
+      <ptnDi:diagramShape id="p_arrived_di" modelElement="p_arrived">
+        <dc:Bounds x="62" y="182" width="36" height="36"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="t_draw_di" modelElement="t_draw">
+        <dc:Bounds x="162" y="184" width="46" height="32"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="p_lab_di" modelElement="p_lab">
+        <dc:Bounds x="282" y="182" width="36" height="36"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="t_start_di" modelElement="t_start">
+        <dc:Bounds x="397" y="184" width="46" height="32"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="p_run_di" modelElement="p_run">
+        <dc:Bounds x="537" y="182" width="36" height="36"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="t_out_di" modelElement="t_out">
+        <dc:Bounds x="647" y="184" width="46" height="32"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="p_cent_di" modelElement="p_cent">
+        <dc:Bounds x="782" y="182" width="36" height="36"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="t_analyze_di" modelElement="t_analyze">
+        <dc:Bounds x="887" y="184" width="46" height="32"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="p_ana_di" modelElement="p_ana">
+        <dc:Bounds x="1002" y="182" width="36" height="36"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="t_ok_di" modelElement="t_ok">
+        <dc:Bounds x="1107" y="114" width="46" height="32"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="t_err_di" modelElement="t_err">
+        <dc:Bounds x="1107" y="254" width="46" height="32"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="p_done_di" modelElement="p_done">
+        <dc:Bounds x="1242" y="182" width="36" height="36"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramShape id="p_cf_di" modelElement="p_cf">
+        <dc:Bounds x="527" y="342" width="36" height="36"/>
+      </ptnDi:diagramShape>
+      <ptnDi:diagramEdge id="a1_di" modelElement="a1" sourceElement="p_arrived" targetElement="t_draw">
+        <ptnDi:waypoint x="98" y="200" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="162" y="200" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a2_di" modelElement="a2" sourceElement="t_draw" targetElement="p_lab">
+        <ptnDi:waypoint x="208" y="200" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="282" y="200" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a3_di" modelElement="a3" sourceElement="p_lab" targetElement="t_start">
+        <ptnDi:waypoint x="318" y="200" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="397" y="200" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a4_di" modelElement="a4" sourceElement="p_cf" targetElement="t_start">
+        <ptnDi:waypoint x="531" y="342" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="432" y="216" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a5_di" modelElement="a5" sourceElement="t_start" targetElement="p_run">
+        <ptnDi:waypoint x="443" y="200" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="537" y="200" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a6_di" modelElement="a6" sourceElement="p_run" targetElement="t_out">
+        <ptnDi:waypoint x="573" y="200" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="647" y="200" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a7_di" modelElement="a7" sourceElement="t_out" targetElement="p_cent">
+        <ptnDi:waypoint x="693" y="200" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="782" y="200" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a8_di" modelElement="a8" sourceElement="t_out" targetElement="p_cf">
+        <ptnDi:waypoint x="658" y="216" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="559" y="342" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a9_di" modelElement="a9" sourceElement="p_cent" targetElement="t_analyze">
+        <ptnDi:waypoint x="818" y="200" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="887" y="200" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a10_di" modelElement="a10" sourceElement="t_analyze" targetElement="p_ana">
+        <ptnDi:waypoint x="933" y="200" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="1002" y="200" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a11_di" modelElement="a11" sourceElement="p_ana" targetElement="t_ok">
+        <ptnDi:waypoint x="1038" y="189" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="1107" y="145" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a12_di" modelElement="a12" sourceElement="p_ana" targetElement="t_err">
+        <ptnDi:waypoint x="1038" y="211" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="1107" y="255" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a13_di" modelElement="a13" sourceElement="t_ok" targetElement="p_done">
+        <ptnDi:waypoint x="1153" y="142" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="1242" y="190" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+      <ptnDi:diagramEdge id="a14_di" modelElement="a14" sourceElement="t_err" targetElement="p_done">
+        <ptnDi:waypoint x="1153" y="258" xsi:type="dc:Point"/>
+        <ptnDi:waypoint x="1242" y="210" xsi:type="dc:Point"/>
+      </ptnDi:diagramEdge>
+    </ptnDi:plane>
+  </ptnDi:diagram>
+</ptn:definitions>

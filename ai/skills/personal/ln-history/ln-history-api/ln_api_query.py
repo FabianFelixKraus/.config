@@ -169,6 +169,9 @@ def main():
     ch.add_argument("--raw", action="store_true")
     ch.add_argument("--until")
 
+    cap = sub.add_parser("channel-capacities", help="scid+capacity_sat for channels open at T (for graph building)")
+    cap.add_argument("--at")
+
     n = sub.add_parser("node", help="single node")
     n.add_argument("node_id")
     n.add_argument("--at")
@@ -234,6 +237,8 @@ def main():
         go("channels", build_query(None, timestamp=args.at, limit=args.limit, offset=args.offset))
     elif args.cmd == "channel-history":
         go(f"channels/{args.scid}/history", build_query(None, raw=args.raw, timestamp=args.until))
+    elif args.cmd == "channel-capacities":
+        go("channels/capacities", build_query(None, timestamp=args.at))
     elif args.cmd == "node":
         go(f"nodes/{args.node_id}", build_query(None, timestamp=args.at, raw_gossip=args.raw,
                                                 channelCount=("all" if args.all_channels else None)))

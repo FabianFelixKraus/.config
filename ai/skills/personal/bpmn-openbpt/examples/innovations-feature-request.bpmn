@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="utf-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_inno" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:collaboration id="Collaboration_1">
+    <bpmn:participant id="Part_Customer" name="Customer"/>
+    <bpmn:participant id="Part_Inno" name="Innovations GmbH" processRef="Process_Inno"/>
+    <bpmn:messageFlow id="M1" sourceRef="Part_Customer" targetRef="Start_FR"/>
+  </bpmn:collaboration>
+  <bpmn:process id="Process_Inno" isExecutable="false">
+    <bpmn:laneSet id="LaneSet_1">
+      <bpmn:lane id="Lane_PM" name="Product management">
+        <bpmn:flowNodeRef>Start_FR</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_CreateTicket</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_UIchanges</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_UpdateTicket</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_UIinvolved</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_Approved</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_Done</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Designer" name="Start-Up designer">
+        <bpmn:flowNodeRef>Task_CreateUISpec</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_UpdateUISpec</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Dev" name="Development team">
+        <bpmn:flowNodeRef>GW_Backlog</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Sub_Rank</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_Clear</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_Planned</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Sub_Implement</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Boundary_Sprint</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:dataObject id="DObj_Ticket"/>
+    <bpmn:dataObject id="DObj_UISpec"/>
+    <bpmn:dataObjectReference id="DOR_T_created" name="Ticket [created]" dataObjectRef="DObj_Ticket"/>
+    <bpmn:dataObjectReference id="DOR_UI_created" name="UI specification [created]" dataObjectRef="DObj_UISpec"/>
+    <bpmn:dataObjectReference id="DOR_T_impl" name="Ticket [implemented]" dataObjectRef="DObj_Ticket"/>
+    <bpmn:dataObjectReference id="DOR_T_done" name="Ticket [done]" dataObjectRef="DObj_Ticket"/>
+    <bpmn:startEvent id="Start_FR" name="Feature request received">
+      <bpmn:messageEventDefinition/>
+    </bpmn:startEvent>
+    <bpmn:task id="Task_CreateTicket" name="Create ticket">
+      <bpmn:dataOutputAssociation id="DA1">
+        <bpmn:targetRef>DOR_T_created</bpmn:targetRef>
+      </bpmn:dataOutputAssociation>
+    </bpmn:task>
+    <bpmn:exclusiveGateway id="GW_UIchanges" name="UI changes?" default="F4"/>
+    <bpmn:task id="Task_UpdateTicket" name="Update ticket"/>
+    <bpmn:exclusiveGateway id="GW_UIinvolved" name="UI involved?" default="F11"/>
+    <bpmn:task id="Task_Review" name="Review ticket">
+      <bpmn:dataOutputAssociation id="DA4">
+        <bpmn:targetRef>DOR_T_done</bpmn:targetRef>
+      </bpmn:dataOutputAssociation>
+    </bpmn:task>
+    <bpmn:exclusiveGateway id="GW_Approved" name="Requirements met?" default="F19"/>
+    <bpmn:endEvent id="End_Done" name="Feature request implemented"/>
+    <bpmn:task id="Task_CreateUISpec" name="Create UI specification">
+      <bpmn:dataOutputAssociation id="DA2">
+        <bpmn:targetRef>DOR_UI_created</bpmn:targetRef>
+      </bpmn:dataOutputAssociation>
+    </bpmn:task>
+    <bpmn:task id="Task_UpdateUISpec" name="Update UI specification"/>
+    <bpmn:exclusiveGateway id="GW_Backlog" name="Backlog"/>
+    <bpmn:adHocSubProcess id="Sub_Rank" name="Rank ticket">
+      <bpmn:task id="Task_Estimate" name="Estimate effort"/>
+      <bpmn:task id="Task_Prioritize" name="Prioritize ticket"/>
+      <bpmn:task id="Task_AddWork" name="Add technical work items"/>
+    </bpmn:adHocSubProcess>
+    <bpmn:exclusiveGateway id="GW_Clear" name="Ticket &amp; specs clear?" default="F13"/>
+    <bpmn:exclusiveGateway id="GW_Planned" name="Ticket planned?" default="F14"/>
+    <bpmn:subProcess id="Sub_Implement" name="Implement ticket">
+      <bpmn:dataOutputAssociation id="DA3">
+        <bpmn:targetRef>DOR_T_impl</bpmn:targetRef>
+      </bpmn:dataOutputAssociation>
+    </bpmn:subProcess>
+    <bpmn:boundaryEvent id="Boundary_Sprint" name="End of sprint reached" attachedToRef="Sub_Implement" cancelActivity="true">
+      <bpmn:timerEventDefinition>
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">P2W</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="F1" sourceRef="Start_FR" targetRef="Task_CreateTicket"/>
+    <bpmn:sequenceFlow id="F2" sourceRef="Task_CreateTicket" targetRef="GW_UIchanges"/>
+    <bpmn:sequenceFlow id="F3" sourceRef="GW_UIchanges" targetRef="Task_CreateUISpec" name="yes">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">uiChanges</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="F4" sourceRef="GW_UIchanges" targetRef="GW_Backlog" name="no"/>
+    <bpmn:sequenceFlow id="F5" sourceRef="Task_CreateUISpec" targetRef="GW_Backlog"/>
+    <bpmn:sequenceFlow id="F6" sourceRef="GW_Backlog" targetRef="Sub_Rank"/>
+    <bpmn:sequenceFlow id="F7" sourceRef="Sub_Rank" targetRef="GW_Clear"/>
+    <bpmn:sequenceFlow id="F8" sourceRef="GW_Clear" targetRef="Task_UpdateTicket" name="unclear">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">unclear</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="F9" sourceRef="Task_UpdateTicket" targetRef="GW_UIinvolved"/>
+    <bpmn:sequenceFlow id="F10" sourceRef="GW_UIinvolved" targetRef="Task_UpdateUISpec" name="yes">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">uiInvolved</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="F11" sourceRef="GW_UIinvolved" targetRef="GW_Backlog" name="no"/>
+    <bpmn:sequenceFlow id="F12" sourceRef="Task_UpdateUISpec" targetRef="GW_Backlog"/>
+    <bpmn:sequenceFlow id="F13" sourceRef="GW_Clear" targetRef="GW_Planned" name="clear"/>
+    <bpmn:sequenceFlow id="F14" sourceRef="GW_Planned" targetRef="Sub_Implement" name="planned"/>
+    <bpmn:sequenceFlow id="F15" sourceRef="GW_Planned" targetRef="GW_Backlog" name="not planned">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">notPlanned</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="F16" sourceRef="Sub_Implement" targetRef="Task_Review"/>
+    <bpmn:sequenceFlow id="F17" sourceRef="Boundary_Sprint" targetRef="GW_Backlog"/>
+    <bpmn:sequenceFlow id="F18" sourceRef="Task_Review" targetRef="GW_Approved"/>
+    <bpmn:sequenceFlow id="F19" sourceRef="GW_Approved" targetRef="End_Done" name="approved"/>
+    <bpmn:sequenceFlow id="F20" sourceRef="GW_Approved" targetRef="GW_Backlog" name="rejected">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">rejected</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_1">
+    <bpmndi:BPMNPlane id="Plane_1" bpmnElement="Collaboration_1">
+      <bpmndi:BPMNShape id="Part_Customer_di" bpmnElement="Part_Customer" isHorizontal="true">
+        <dc:Bounds x="190" y="70" width="1760" height="60"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Part_Inno_di" bpmnElement="Part_Inno" isHorizontal="true">
+        <dc:Bounds x="190" y="150" width="1760" height="700"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_PM_di" bpmnElement="Lane_PM" isHorizontal="true">
+        <dc:Bounds x="220" y="150" width="1730" height="190"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_Designer_di" bpmnElement="Lane_Designer" isHorizontal="true">
+        <dc:Bounds x="220" y="340" width="1730" height="170"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_Dev_di" bpmnElement="Lane_Dev" isHorizontal="true">
+        <dc:Bounds x="220" y="510" width="1730" height="340"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Start_FR_di" bpmnElement="Start_FR">
+        <dc:Bounds x="250" y="227" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_CreateTicket_di" bpmnElement="Task_CreateTicket">
+        <dc:Bounds x="320" y="205" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_UIchanges_di" bpmnElement="GW_UIchanges" isMarkerVisible="true">
+        <dc:Bounds x="480" y="220" width="50" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_UpdateTicket_di" bpmnElement="Task_UpdateTicket">
+        <dc:Bounds x="1120" y="205" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_UIinvolved_di" bpmnElement="GW_UIinvolved" isMarkerVisible="true">
+        <dc:Bounds x="1290" y="220" width="50" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Review_di" bpmnElement="Task_Review">
+        <dc:Bounds x="1560" y="205" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_Approved_di" bpmnElement="GW_Approved" isMarkerVisible="true">
+        <dc:Bounds x="1720" y="220" width="50" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_Done_di" bpmnElement="End_Done">
+        <dc:Bounds x="1830" y="227" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_CreateUISpec_di" bpmnElement="Task_CreateUISpec">
+        <dc:Bounds x="455" y="385" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_UpdateUISpec_di" bpmnElement="Task_UpdateUISpec">
+        <dc:Bounds x="1120" y="385" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_Backlog_di" bpmnElement="GW_Backlog" isMarkerVisible="true">
+        <dc:Bounds x="620" y="615" width="50" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Sub_Rank_di" bpmnElement="Sub_Rank" isExpanded="true">
+        <dc:Bounds x="730" y="565" width="370" height="150"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Estimate_di" bpmnElement="Task_Estimate">
+        <dc:Bounds x="750" y="600" width="100" height="55"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Prioritize_di" bpmnElement="Task_Prioritize">
+        <dc:Bounds x="865" y="600" width="100" height="55"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_AddWork_di" bpmnElement="Task_AddWork">
+        <dc:Bounds x="980" y="600" width="100" height="55"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_Clear_di" bpmnElement="GW_Clear" isMarkerVisible="true">
+        <dc:Bounds x="1150" y="615" width="50" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_Planned_di" bpmnElement="GW_Planned" isMarkerVisible="true">
+        <dc:Bounds x="1290" y="615" width="50" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Sub_Implement_di" bpmnElement="Sub_Implement" isExpanded="false">
+        <dc:Bounds x="1400" y="600" width="120" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Boundary_Sprint_di" bpmnElement="Boundary_Sprint">
+        <dc:Bounds x="1442" y="662" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DOR_T_created_di" bpmnElement="DOR_T_created">
+        <dc:Bounds x="352" y="290" width="36" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DOR_UI_created_di" bpmnElement="DOR_UI_created">
+        <dc:Bounds x="487" y="455" width="36" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DOR_T_impl_di" bpmnElement="DOR_T_impl">
+        <dc:Bounds x="1542" y="735" width="36" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DOR_T_done_di" bpmnElement="DOR_T_done">
+        <dc:Bounds x="1592" y="290" width="36" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="F1_di" bpmnElement="F1">
+        <di:waypoint x="286" y="245"/>
+        <di:waypoint x="320" y="245"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F2_di" bpmnElement="F2">
+        <di:waypoint x="420" y="245"/>
+        <di:waypoint x="480" y="245"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F3_di" bpmnElement="F3">
+        <di:waypoint x="505" y="270"/>
+        <di:waypoint x="505" y="425"/>
+        <di:waypoint x="455" y="425"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F4_di" bpmnElement="F4">
+        <di:waypoint x="530" y="245"/>
+        <di:waypoint x="600" y="245"/>
+        <di:waypoint x="600" y="640"/>
+        <di:waypoint x="620" y="640"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F5_di" bpmnElement="F5">
+        <di:waypoint x="505" y="465"/>
+        <di:waypoint x="505" y="640"/>
+        <di:waypoint x="620" y="640"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F6_di" bpmnElement="F6">
+        <di:waypoint x="670" y="640"/>
+        <di:waypoint x="730" y="640"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F7_di" bpmnElement="F7">
+        <di:waypoint x="1100" y="640"/>
+        <di:waypoint x="1150" y="640"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F8_di" bpmnElement="F8">
+        <di:waypoint x="1175" y="615"/>
+        <di:waypoint x="1090" y="615"/>
+        <di:waypoint x="1090" y="245"/>
+        <di:waypoint x="1120" y="245"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F9_di" bpmnElement="F9">
+        <di:waypoint x="1220" y="245"/>
+        <di:waypoint x="1290" y="245"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F10_di" bpmnElement="F10">
+        <di:waypoint x="1315" y="270"/>
+        <di:waypoint x="1315" y="425"/>
+        <di:waypoint x="1220" y="425"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F11_di" bpmnElement="F11">
+        <di:waypoint x="1340" y="245"/>
+        <di:waypoint x="1360" y="245"/>
+        <di:waypoint x="1360" y="790"/>
+        <di:waypoint x="645" y="790"/>
+        <di:waypoint x="645" y="665"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F12_di" bpmnElement="F12">
+        <di:waypoint x="1220" y="425"/>
+        <di:waypoint x="1240" y="425"/>
+        <di:waypoint x="1240" y="775"/>
+        <di:waypoint x="645" y="775"/>
+        <di:waypoint x="645" y="665"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F13_di" bpmnElement="F13">
+        <di:waypoint x="1200" y="640"/>
+        <di:waypoint x="1290" y="640"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F14_di" bpmnElement="F14">
+        <di:waypoint x="1340" y="640"/>
+        <di:waypoint x="1400" y="640"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F15_di" bpmnElement="F15">
+        <di:waypoint x="1315" y="665"/>
+        <di:waypoint x="1315" y="760"/>
+        <di:waypoint x="645" y="760"/>
+        <di:waypoint x="645" y="665"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F16_di" bpmnElement="F16">
+        <di:waypoint x="1520" y="640"/>
+        <di:waypoint x="1610" y="640"/>
+        <di:waypoint x="1610" y="285"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F17_di" bpmnElement="F17">
+        <di:waypoint x="1460" y="698"/>
+        <di:waypoint x="1460" y="745"/>
+        <di:waypoint x="645" y="745"/>
+        <di:waypoint x="645" y="665"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F18_di" bpmnElement="F18">
+        <di:waypoint x="1660" y="245"/>
+        <di:waypoint x="1720" y="245"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F19_di" bpmnElement="F19">
+        <di:waypoint x="1770" y="245"/>
+        <di:waypoint x="1830" y="245"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F20_di" bpmnElement="F20">
+        <di:waypoint x="1745" y="270"/>
+        <di:waypoint x="1745" y="800"/>
+        <di:waypoint x="645" y="800"/>
+        <di:waypoint x="645" y="665"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="DA1_di" bpmnElement="DA1">
+        <di:waypoint x="370" y="285"/>
+        <di:waypoint x="370" y="290"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="DA2_di" bpmnElement="DA2">
+        <di:waypoint x="505" y="465"/>
+        <di:waypoint x="505" y="455"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="DA3_di" bpmnElement="DA3">
+        <di:waypoint x="1510" y="660"/>
+        <di:waypoint x="1560" y="735"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="DA4_di" bpmnElement="DA4">
+        <di:waypoint x="1610" y="285"/>
+        <di:waypoint x="1610" y="290"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="M1_di" bpmnElement="M1">
+        <di:waypoint x="268" y="130"/>
+        <di:waypoint x="268" y="227"/>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
