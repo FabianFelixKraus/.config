@@ -217,9 +217,28 @@ accept both the integer and the `"865123x1x0"` forms. Validated against a real s
 | Snapshot | `GET snapshot-diff/{start}/{end}?rawGossip` | true=octet-stream; false=`GossipEventDto[]` ordered by time |
 | Bitcoin | `GET blocks/{height:long}` / `blocks/{hash:regex 64hex}` / `blocks?timestamp` | BlockDto |
 | Stats | `GET stats/channels/top?by&limit`, `stats/nodes/top?by&limit`, `stats/network?timestamp`, `stats/closures?from&to` | |
+| Stream | `GET stream?types&since` (**WebSocket**) | Live raw-gossip stream. Upgrade required (plain GET=400). Each msg = one binary frame = raw gossip envelope (same bytes as snapshot). `types`=comma BOLT#7 types (256/257/258, default all); `since`=internal_id → backfill the gap then go live (reconnect catch-up, dedup by internal_id, cap 50k). Hidden from Swagger. Browsers: key via `?api_key=` (can't set headers on WS handshake). |
 
 Controller discovery: the Api is a class library, so `Program.cs` does
 `.AddApplicationPart(typeof(ChannelController).Assembly)`.
+
+### Live gossip stream (WebSocket) — how it works
+
+Source is **Postgres `LISTEN/NOTIFY`**, not polling. Path:
+`gossip-processor INSERT → AFTER-INSERT trigger pg_notify('lnhistory_gossip', {"i":internal_id,"t":type})`
+(delivered on COMMIT) `→ GossipNotificationListener` (Data, `BackgroundService`, one dedicated
+Npgsql conn on `LISTEN` + a decoupled pump that fetches `raw_gossip` by internal_id on a pooled
+conn) `→ IGossipStream` (Data, singleton in-memory fan-out; per-subscriber bounded channel,
+**drop-oldest** so a slow client can't stall the listener) `→ IGossipStreamService` (Core wrapper:
+`Subscribe` + `GetBackfillAsync`) `→ GossipStreamController` (Api, `UseWebSockets`).
+
+- **The DB trigger is a separate migration** (`Documentation/migrations/2026-08-01-gossip-notify-trigger.sql`),
+  run with the migration role. Without it the listener idles (LISTEN succeeds, no notifications) —
+  the .NET side is inert but harmless. **Disable the triggers during bulk imports** (notification storm).
+- Toggle: `GossipStream:Enabled` (default true) gates whether the hosted listener starts.
+- Infra: nginx-proxy-manager needs **"Websockets Support"** on for the API proxy host; Cloudflare passes WS.
+- No implicit replay: reconnect with `?since=<last internal_id>` to backfill; a small dup window at the
+  seam is possible but gossip is content-addressed (idempotent), so dedup is safe.
 
 ### DTOs & serialization
 
@@ -231,6 +250,10 @@ Controller discovery: the Api is a class library, so `Program.cs` does
 - Digit-containing names need explicit `[JsonPropertyName]` (SnakeCaseLower would produce
   `node_id1`, not `node_id_1`): `ChannelDto.NodeId1/2` -> `node_id_1/2`, `Node1/2` -> `node_1/2`.
 - `raw_gossip` is the universal name for raw bytes (never `raw_bytes`).
+- `ChannelDto.announceable_timestamp` (added 2026-07-31): block ts of `(scid>>40)+5` = 6-conf
+  announceable point (BOLT 7). Threaded through `Channel` model → `ChannelRow` → `ToChannel` →
+  `ChannelColumns` (SELECT) → `ChannelDto` → `DomainToDtoMapper`. Nullable; `null` until
+  `chain-enricher` backfills it. Not derived from `funding_timestamp` (corrupt for ~18 channels).
 - `channel_flags`/`message_flags` render as an 8-bit **binary string** (`"00000001"`).
 - `fee_policies` = `Dictionary<string,DirectionPolicyDto>` keyed `"0"/"1"`; populated only
   on single-channel/history, omitted in list context. Missing direction -> key present with
@@ -246,10 +269,57 @@ Controller discovery: the Api is a class library, so `Program.cs` does
 - Errors: `Problem(detail, statusCode)` -> ProblemDetails. 400 for bad scid/hash/timestamp,
   404 for a missing single resource, **empty list -> 200** with empty items.
 
-### Auth
+### Auth & per-key rate limiting
 
-`SimpleApiKeyMiddleware` checks `x-api-key` against config `ApiKey`, returns ProblemDetails
-on 401, skips `/swagger`. Gated by `ApiKeyMiddleware:Enabled` (false in Development).
+Multi-tenant API keys with **cost-weighted** rate limiting (each researcher gets their own key;
+the admin key is unlimited). Gated by `ApiKeyMiddleware:Enabled` (false in Development ⇒ no auth,
+no limits). Public API stays **read-only** — keys are managed out-of-band, never minted over HTTP.
+
+**Store — the `api` schema in the lnhistory Postgres** (owner `admin`; reader roles have no access
+since it holds key hashes). Migration: `Documentation/migrations/2026-08-01-api-key-schema.sql`.
+- `api.api_keys` — `id`, `key_hash` (sha256, unique-indexed), `display_prefix` (`lnh_ab12…`),
+  `role` (`admin`|`researcher`), `owner_label`, `daily_budget` / `burst_per_sec` /
+  `max_stream_conns` (**NULL ⇒ global default**), `expires_at`, `enabled`, `created_at`, `last_used_at`.
+- `api.endpoint_weights` — `route_key` (the endpoint's raw route pattern, e.g.
+  `GET ln-history/v{v}/snapshot/{timestamp}`) → `weight`. **Admin-tunable in-DB**, no redeploy.
+- `api.usage` — aggregated ledger `(key_id, usage_day, endpoint)` → `sum_cost, req_count,
+  sum_duration_ms, sum_bytes`. Written by async flush, read for reporting.
+
+**Cost model.** Each request's cost = the static weight of its endpoint (seeded from documented DB
+costs: cheap lookups=1, lists=3, `stats`=3, `snapshot`=100 / `?withUpdates`=150, `snapshot-diff`=40,
+stream backfill=40). Budgets are spent in these units. Actual `duration_ms`+`bytes` are also recorded
+for measurement/retuning, but enforcement is on the predictable weight.
+
+**Enforcement (in-memory, authoritative; DB is the durable ledger):**
+- `ApiKeyAuthMiddleware` (early) resolves the key from `x-api-key` (or `?api_key=` on the WS
+  handshake), validates against the in-memory cache, 401 on bad/disabled/expired. `role=admin` ⇒
+  bypass all limits. Sets the key context in `HttpContext.Items`.
+- **Burst guard**: per-key token bucket (`burst_per_sec`, default 5/s, bucket 10) → 429.
+- **Cost pre-charge**: `CostEnforcementFilter` (MVC resource filter, runs after routing so the
+  matched route's weight is known, **before** the handler) — if `today_spent + weight > daily_budget`
+  ⇒ **429 + `Retry-After` + ProblemDetails, DB never touched**; else deduct, run, record actuals,
+  **refund on error/timeout**. Emits `X-RateLimit-Remaining` / `X-RateLimit-Reset`.
+- **Daily budget**: fixed per-day (resets 00:00 UTC), default **1000** units/researcher. Counters
+  reload from `api.usage` on startup (a restart can't reset a budget); deltas flush every few seconds.
+- **WebSocket stream**: per-key concurrent-connection cap (`max_stream_conns`, default 2); the
+  `?since` backfill is charged like a heavy query; the live tail is budget-free (in-memory fan-out,
+  zero DB load); slots released on disconnect.
+
+**Anti-lockout.** The config `ApiKey` remains valid as an **emergency unlimited admin** (bypasses the
+store), so an empty/unreachable `api` schema can never lock you out. Researcher keys are cached in
+memory and **reloaded every ~30s** — mint/revoke via SQL propagates within ~30s.
+
+**Admin CLI** (`ln_api_admin.py`, next to this skill) — `mint` (prints the key **once**; only the
+sha256 is stored), `revoke`, `list`, `usage`. Talks to the `api` schema via `psql`; reads the DSN
+from `.env` (`LN_HISTORY_ADMIN_DSN`) or `$PGCS`.
+
+```bash
+ADMIN=~/.config/ai/skills/personal/ln-history/ln-history-api/ln_api_admin.py
+python3 "$ADMIN" mint --owner "alice@uni.edu" [--daily-budget N] [--burst N] [--expires 2026-12-31]
+python3 "$ADMIN" list                 # keys + prefixes + limits + last_used
+python3 "$ADMIN" usage [--day today]  # per-key cost/requests/bytes from api.usage
+python3 "$ADMIN" revoke lnh_ab12       # by display prefix or id
+```
 
 ## Versioning & container image
 

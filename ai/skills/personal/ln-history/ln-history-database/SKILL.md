@@ -335,6 +335,7 @@ One row per `channel_announcement` (type 256). The channel lives here until clos
 | bitcoin_key_2       | varchar(66) | YES      |                               |
 | raw_gossip          | bytea       | YES      | full envelope (see above)     |
 | internal_id         | bigint      | YES      | → gossip_inventory.internal_id |
+| announceable_timestamp | timestamptz | YES   | block-header ts of block (funding_height+5); 6-conf announceable point. Added+backfilled 2026-07-31 — see note below |
 
 Constraints: PK(gossip_id), UNIQUE(scid),
 FK gossip_id → gossip_inventory(gossip_id) ON DELETE CASCADE NOT VALID,
@@ -346,6 +347,29 @@ Indexes: PK, UNIQUE(scid), (internal_id),
 `idx_chan_validity` (funding_timestamp DESC, closing_timestamp).
 
 ~362K rows.
+
+#### `announceable_timestamp` (added 2026-07-31)
+
+Block-header timestamp of block `(scid >> 40) + 5` — i.e. the block at which the funding
+tx reaches **6 confirmations** (the BOLT 7 "SHOULD have 6 confirmations before announcing"
+threshold). Added for **channel_announcement propagation-lag** analysis (lag = first
+`gossip_observations.seen_at` of the announcement − `announceable_timestamp`).
+
+- **Backfilled once** (all 500,381 rows) from Bitcoin Core `getblockhash`→`getblockheader`
+  (header-only, ~1–2k blocks/s; `getblockstats` is 100× slower — it loads block bodies).
+  Values are **scid-derived and Core-authoritative**, independent of `funding_timestamp`.
+- **⚠️ NOT written by ingest.** `gossip-processor` doesn't populate it, so every channel
+  ingested after 2026-07-31 has `announceable_timestamp = NULL` until the writer threads it
+  in (same recurring "new column not in every INSERT path" defect as `internal_id` ×4) or a
+  periodic backfill runs. Detect drift: `SELECT count(*) FROM channels WHERE scid IS NOT NULL
+  AND announceable_timestamp IS NULL`.
+- **Do NOT self-map block times from `funding_timestamp`/`closing_timestamp`.** A first
+  attempt built the height→ts map from those columns; ~12+ heights have a **corrupt
+  `funding_timestamp`** (doesn't match the scid's block — off by days to >1 year; some carry
+  sub-second precision, i.e. a wall-clock value not a block time), which poisoned the map.
+  The column is a cheap corruption detector: `announceable_timestamp - funding_timestamp`
+  should be a small positive ~5-block interval (median ~46 min); gaps >1 day or strongly
+  negative flag a bad `funding_timestamp` (18 such channels as of 2026-07-31).
 
 ---
 
