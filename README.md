@@ -10,7 +10,14 @@ git clone https://github.com/FabianFelixKraus/.config.git ~/.config
 
 # Claude Code custom skills
 ln -sf ~/.config/claude/commands ~/.claude/commands
+
+# iTerm2 (only needed on machines where WezTerm isn't available)
+brew install --cask font-jetbrains-mono font-symbols-only-nerd-font
+mkdir -p ~/Library/"Application Support"/iTerm2/DynamicProfiles
+ln -sf ~/.config/iterm2/DynamicProfiles/fabian.json ~/Library/"Application Support"/iTerm2/DynamicProfiles/fabian.json
 ```
+
+Then in iTerm2: **Preferences → Profiles**, select **"Fabian (Catppuccin Macchiato)"**, right-click it → **Set as Default**.
 
 ## Setup on Windows
 
@@ -30,5 +37,6 @@ ln -sf ~/.config/claude/commands ~/.claude/commands
 |-------------|--------------------------------|
 | `nvim/`     | Neovim configuration           |
 | `wezterm/`  | WezTerm terminal configuration |
+| `iterm2/`   | iTerm2 Dynamic Profile + Catppuccin Macchiato color preset (fallback for machines without WezTerm) |
 | `starship/` | Starship prompt theme          |
 | `claude/`   | Claude Code custom skills      |

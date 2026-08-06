@@ -14,6 +14,10 @@
 !starship/**
 !ai/
 !ai/**
+!iterm2/
+!iterm2/catppuccin-macchiato.itermcolors
+!iterm2/DynamicProfiles/
+!iterm2/DynamicProfiles/**
 !VERSION
 !.cz.toml
 

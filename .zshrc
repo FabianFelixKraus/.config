@@ -49,6 +49,11 @@ export NVM_DIR="$HOME/.nvm"
 
 [ -f "$HOME/.ghcup/env" ] && . "$HOME/.ghcup/env"
 
+# Java (jenv)
+if command -v jenv >/dev/null 2>&1; then
+eval "$(jenv init -)"
+fi
+
 # =============================================================================
 # 3. ALIASES
 # =============================================================================
