@@ -31,6 +31,21 @@ esac
 
 export PATH="/usr/bin/local/tailscale:$PATH"
 
+# Gradle properties -> environment variables
+# (dots aren't valid in shell var names, so e.g. gpr.user becomes gpr_user)
+
+if [ -f "$HOME/.gradle/gradle.properties" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ''|\#*) continue ;;
+    esac
+    key="${line%%=*}"
+    value="${line#*=}"
+    varname="${key//./_}"
+    export "$varname=$value"
+  done < "$HOME/.gradle/gradle.properties"
+fi
+
 # =============================================================================
 # 2. TOOL INITIALIZATIONS
 # =============================================================================
@@ -100,3 +115,17 @@ eval "$(starship init zsh)"
 fi
 
 echo -e "\n✅ Profile loaded successfully."
+
+### MANAGED BY RANCHER DESKTOP START (DO NOT EDIT)
+export PATH="/Users/fabiankraus/.rd/bin:$PATH"
+### MANAGED BY RANCHER DESKTOP END (DO NOT EDIT)
+
+# Prefer Homebrew's kubectl (kubernetes-cli) over Rancher Desktop's bundled copy
+export PATH="/opt/homebrew/bin:$PATH"
+
+# dx shell completion
+eval "$(dx completion zsh)"
+
+# >>> dx ai-kit (managed — do not edit) >>>
+[ -r /Users/fabiankraus/.traderepublic/ai-kit/ai-kit-env.sh ] && source /Users/fabiankraus/.traderepublic/ai-kit/ai-kit-env.sh
+# <<< dx ai-kit <<<
