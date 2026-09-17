@@ -18,6 +18,13 @@
 !iterm2/catppuccin-macchiato.itermcolors
 !iterm2/DynamicProfiles/
 !iterm2/DynamicProfiles/**
+!git/
+!git/scripts/
+!git/scripts/**
+!git/launchd/
+!git/launchd/**
+!aerospace/
+!aerospace/**
 !VERSION
 !.cz.toml
 
