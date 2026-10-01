@@ -80,17 +80,18 @@ gaps.outer.bottom =     0
 gaps.outer.top =        0
 gaps.outer.right =      0
 
-# Pin workspaces to monitors: odd -> laptop screen, even -> LG external monitor
+# Pin workspaces to monitors: odd -> laptop screen, even -> external monitor
+# (LG or DELL, whichever is connected)
 # See: https://nikitabobko.github.io/AeroSpace/guide#assign-workspaces-to-monitors
 [workspace-to-monitor-force-assignment]
 1 = 'built-in'
-2 = 'LG'
+2 = ['LG', 'DELL']
 3 = 'built-in'
-4 = 'LG'
+4 = ['LG', 'DELL']
 5 = 'built-in'
-6 = 'LG'
+6 = ['LG', 'DELL']
 7 = 'built-in'
-8 = 'LG'
+8 = ['LG', 'DELL']
 9 = 'built-in'
 
 # Pin specific apps to specific workspaces on launch
@@ -116,8 +117,20 @@ if.app-id = 'com.jetbrains.intellij'
 run = 'move-node-to-workspace 6'
 
 [[on-window-detected]]
+if.app-id = 'com.microsoft.VSCode'
+run = 'move-node-to-workspace 6'
+
+[[on-window-detected]]
 if.app-id = 'com.spotify.client'
 run = 'move-node-to-workspace 9'
+
+[[on-window-detected]]
+if.app-id = 'com.tinyapp.TablePlus'
+run = 'move-node-to-workspace 8'
+
+[[on-window-detected]]
+if.app-id = 'com.luckymarmot.Paw'
+run = 'move-node-to-workspace 7'
 
 # 'main' binding mode declaration
 # See: https://nikitabobko.github.io/AeroSpace/guide#binding-modes
@@ -244,10 +257,11 @@ run = 'move-node-to-workspace 9'
 
     # See: https://nikitabobko.github.io/AeroSpace/commands#join-with
     # Merge the focused window with its neighbor into a 50/50 split
-    alt-cmd-left = 'join-with left'
-    alt-cmd-right = 'join-with right'
-    alt-cmd-up = 'join-with up'
-    alt-cmd-down = 'join-with down'
+    # Arrow variants are left free: cmd-alt-left/right are IntelliJ Back/Forward
+    alt-cmd-ctrl-h = 'join-with left'
+    alt-cmd-ctrl-l = 'join-with right'
+    alt-cmd-ctrl-k = 'join-with up'
+    alt-cmd-ctrl-j = 'join-with down'
 
     # See: https://nikitabobko.github.io/AeroSpace/commands#focus-monitor
     alt-cmd-ctrl-left = 'focus-monitor left'

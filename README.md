@@ -24,6 +24,9 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.fabiankraus.git-fetc
 # Nothing to symlink — AeroSpace natively falls back to ~/.config/aerospace/aerospace.toml.
 brew install --cask nikitabobko/tap/aerospace
 open -a AeroSpace   # first launch triggers the Accessibility permission prompt — approve it
+
+# IdeaVim (IntelliJ/JetBrains IDEs) — symlink covers older IdeaVim versions without XDG support
+ln -sf ~/.config/ideavim/ideavimrc ~/.ideavimrc
 ```
 
 Then in iTerm2: **Preferences → Profiles**, select **"Fabian (Catppuccin Macchiato)"**, right-click it → **Set as Default**.
@@ -53,3 +56,4 @@ For AeroSpace: on first launch, grant **Accessibility** access when prompted (Sy
 | `claude/`   | Claude Code custom skills      |
 | `git/`      | Daily `git fetch` sweep of `~/Documents` repos (script + launchd job) |
 | `aerospace/`| AeroSpace tiling window manager config (workspace switching, layouts) |
+| `ideavim/`  | IdeaVim config (routes yank/delete/paste through the macOS clipboard, so Maccy captures them) |

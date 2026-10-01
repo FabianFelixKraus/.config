@@ -75,6 +75,25 @@ fi
 alias python=python3
 alias pip=pip3
 
+# Modern CLI replacements
+alias ls='eza'
+alias ll='eza -l --git'
+alias la='eza -la --git'
+alias tree='eza --tree'
+alias cat='bat --paging=never'
+
+# Fetch all git repos in a directory (defaults to ~/Documents)
+fetchall() {
+  local dir="${1:-$HOME/Documents}"
+  local d
+  for d in "$dir"/*/; do
+    if [ -d "$d/.git" ]; then
+      echo "== ${d} =="
+      git -C "$d" fetch --all --prune
+    fi
+  done
+}
+
 # =============================================================================
 # 4. COMPLETIONS (Executed exactly once for maximum speed)
 # =============================================================================
@@ -114,6 +133,20 @@ if command -v starship >/dev/null 2>&1; then
 eval "$(starship init zsh)"
 fi
 
+# Fish-style autosuggestions (ghost-text completion from history)
+[ -f /opt/homebrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh ] && \
+source /opt/homebrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+
+# fzf (Ctrl+R history search, Ctrl+T file search, **<Tab> completion)
+command -v fzf >/dev/null 2>&1 && eval "$(fzf --zsh)"
+
+# zoxide (smarter `cd` — use `z <partial dir>` to jump)
+command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init zsh)"
+
+# zsh-syntax-highlighting (must be sourced last, after other widget-wrapping plugins)
+[ -f /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ] && \
+source /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+
 echo -e "\n✅ Profile loaded successfully."
 
 ### MANAGED BY RANCHER DESKTOP START (DO NOT EDIT)
@@ -129,3 +162,7 @@ eval "$(dx completion zsh)"
 # >>> dx ai-kit (managed — do not edit) >>>
 [ -r /Users/fabiankraus/.traderepublic/ai-kit/ai-kit-env.sh ] && source /Users/fabiankraus/.traderepublic/ai-kit/ai-kit-env.sh
 # <<< dx ai-kit <<<
+
+# >>> dx docker (managed — do not edit) >>>
+[ -r /Users/fabiankraus/.traderepublic/dx-docker/env.sh ] && source /Users/fabiankraus/.traderepublic/dx-docker/env.sh
+# <<< dx docker <<<
