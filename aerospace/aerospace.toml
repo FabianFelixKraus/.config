@@ -24,7 +24,9 @@ enable-normalization-opposite-orientation-for-nested-containers = true
 # See: https://nikitabobko.github.io/AeroSpace/guide#layouts
 # The 'accordion-padding' specifies the size of accordion padding
 # You can set 0 to disable the padding feature
-accordion-padding = 30
+# 0 means the focused window of an accordion container fills the whole workspace.
+# Workspace 8 (TablePlus) relies on this, see the on-window-detected rule below.
+accordion-padding = 0
 
 # Possible values: tiles|accordion
 default-root-container-layout = 'tiles'
@@ -124,9 +126,13 @@ run = 'move-node-to-workspace 6'
 if.app-id = 'com.spotify.client'
 run = 'move-node-to-workspace 9'
 
+# TablePlus keeps extra windows open (the connection list, schema diagrams).
+# Tiling would split workspace 8 between them, so each window gets half the screen.
+# Accordion plus accordion-padding = 0 gives the focused TablePlus window the full
+# workspace and stacks the other windows behind it.
 [[on-window-detected]]
 if.app-id = 'com.tinyapp.TablePlus'
-run = 'move-node-to-workspace 8'
+run = ['move-node-to-workspace 8', 'layout accordion']
 
 [[on-window-detected]]
 if.app-id = 'com.luckymarmot.Paw'
