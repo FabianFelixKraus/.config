@@ -166,3 +166,9 @@ eval "$(dx completion zsh)"
 # >>> dx docker (managed — do not edit) >>>
 [ -r /Users/fabiankraus/.traderepublic/dx-docker/env.sh ] && source /Users/fabiankraus/.traderepublic/dx-docker/env.sh
 # <<< dx docker <<<
+
+# Always use the dx Docker context. dx-docker/env.sh exports DOCKER_HOST, which makes the
+# docker CLI ignore contexts and report "default". DOCKER_CONTEXT also wins over a
+# currentContext that Rancher Desktop rewrites. Testcontainers reads ~/.testcontainers.properties.
+unset DOCKER_HOST
+export DOCKER_CONTEXT=dx
