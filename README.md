@@ -33,6 +33,22 @@ Then in iTerm2: **Preferences → Profiles**, select **"Fabian (Catppuccin Macch
 
 For AeroSpace: on first launch, grant **Accessibility** access when prompted (System Settings → Privacy & Security → Accessibility). Without it, AeroSpace can't manage windows.
 
+### Option key on a German keyboard
+
+On a German layout you type `@` with Option+L and `~` with Option+N. A terminal
+that treats Option as the Meta key swallows these keystrokes and sends an escape
+sequence instead, so no character appears.
+
+Terminal.app: open Settings → Profiles → your profile → Keyboard, and turn off
+"Use Option as Meta Key". The stored key is `useOptionAsMetaKey` in
+`com.apple.Terminal`. Quit Terminal.app before you write that key from a script,
+because Terminal.app writes its own preferences back when it quits.
+
+iTerm2: open Settings → Profiles → Keys, and set "Left Option key" to `Normal`.
+
+WezTerm needs no change. `wezterm/wezterm.lua` sets
+`send_composed_key_when_left_alt_is_pressed`, which keeps Option+L as `@`.
+
 ## Setup on Windows
 
 1. Clone to `C:\Users\<USER>\.config`
