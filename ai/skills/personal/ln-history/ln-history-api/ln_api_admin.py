@@ -128,6 +128,33 @@ def cmd_usage(args, dsn):
                "ORDER BY cost DESC;"))
 
 
+def cmd_requests(args, dsn):
+    """Per-request log from api.request_log, newest first (or a per-endpoint summary)."""
+    where = []
+    if args.key:
+        where.append(f"k.id = {int(args.key)}" if args.key.isdigit()
+                     else f"(k.display_prefix = {q(args.key)} OR k.owner_label = {q(args.key)})")
+    if args.since:
+        where.append(f"r.ts >= {q(args.since)}::timestamptz")
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+    if args.summary:
+        print(psql(dsn,
+                   "SELECT coalesce(k.owner_label, 'emergency-admin') AS owner, r.route_key, "
+                   "count(*) AS reqs, sum(r.cost) AS cost, "
+                   "count(*) FILTER (WHERE r.status >= 400) AS errors, "
+                   "pg_size_pretty(sum(r.bytes)) AS bytes, min(r.ts) AS first, max(r.ts) AS last, "
+                   "count(DISTINCT r.client_ip) AS ips "
+                   "FROM api.request_log r LEFT JOIN api.api_keys k ON k.id = r.key_id "
+                   f"{clause} GROUP BY 1, 2 ORDER BY 1, cost DESC;"))
+        return
+    print(psql(dsn,
+               "SELECT r.ts, coalesce(k.owner_label, 'emergency-admin') AS owner, r.method, "
+               "r.path || coalesce('?' || r.query, '') AS request, r.status, r.cost, r.charge_outcome, "
+               "r.duration_ms AS ms, r.bytes, r.client_ip, r.user_agent "
+               "FROM api.request_log r LEFT JOIN api.api_keys k ON k.id = r.key_id "
+               f"{clause} ORDER BY r.ts DESC LIMIT {int(args.limit)};"))
+
+
 def main():
     p = argparse.ArgumentParser(description="Admin ln-history-api keys + usage (via psql).")
     p.add_argument("--dsn", help="Postgres DSN (else $LN_HISTORY_ADMIN_DSN / $PGCS / dev appsettings)")
@@ -149,9 +176,16 @@ def main():
     u = sub.add_parser("usage", help="per-key usage for a UTC day")
     u.add_argument("--day", help="YYYY-MM-DD or 'today' (default today, UTC)")
 
+    rq = sub.add_parser("requests", help="per-request log (api.request_log), newest first")
+    rq.add_argument("--key", help="key id, display prefix, or owner label (e.g. my-label)")
+    rq.add_argument("--since", help="only requests at/after this time, e.g. 2026-10-28")
+    rq.add_argument("--limit", type=int, default=100, help="rows to show (default 100)")
+    rq.add_argument("--summary", action="store_true", help="per-endpoint totals instead of rows")
+
     args = p.parse_args()
     dsn = resolve_dsn(args.dsn)
-    {"mint": cmd_mint, "revoke": cmd_revoke, "list": cmd_list, "usage": cmd_usage}[args.cmd](args, dsn)
+    {"mint": cmd_mint, "revoke": cmd_revoke, "list": cmd_list, "usage": cmd_usage,
+     "requests": cmd_requests}[args.cmd](args, dsn)
 
 
 if __name__ == "__main__":
