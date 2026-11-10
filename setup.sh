@@ -63,6 +63,24 @@ case "$OS" in
   *) echo "setup.sh only automates macOS and Linux. See README.md for Windows." >&2; exit 1 ;;
 esac
 
+# Package installs and auto-update.sh both need sudo. Check up front and stop
+# before doing anything if it can't work. Otherwise every sudo call fails on
+# its own (e.g. when run via `!` inside Claude Code, which has no TTY) and the
+# run still ends with "Done."
+require_sudo() {
+  [[ $EUID -eq 0 ]] && return 0
+  sudo -n true 2>/dev/null && return 0
+  # sudo reads the password from /dev/tty, not stdin, so test that it opens.
+  if { : </dev/tty; } 2>/dev/null; then
+    echo "Some steps need root -- asking for your sudo password once up front..."
+    sudo -v && return 0
+  fi
+  echo "setup.sh needs sudo, but can't get a password prompt (no terminal)." >&2
+  echo "Run it from a normal terminal instead: cd \"$CONFIG_DIR\" && ./setup.sh" >&2
+  exit 1
+}
+require_sudo
+
 HOST="$(scutil --get LocalHostName 2>/dev/null || hostname -s)"
 PROFILE_FILE="$MACHINES_DIR/$HOST.zsh"
 

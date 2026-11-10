@@ -119,9 +119,23 @@ configure_macos() {
   echo "Security updates will install automatically; full macOS upgrades stay manual."
 }
 
+# Same up-front check as setup.sh (kept as a copy so this script still runs
+# on its own): stop now instead of letting every sudo call fail separately.
+require_sudo() {
+  [[ $EUID -eq 0 ]] && return 0
+  sudo -n true 2>/dev/null && return 0
+  # sudo reads the password from /dev/tty, not stdin, so test that it opens.
+  if { : </dev/tty; } 2>/dev/null; then
+    sudo -v && return 0
+  fi
+  echo "auto-update.sh needs sudo, but can't get a password prompt (no terminal)." >&2
+  echo "Run it from a normal terminal instead: cd \"$CONFIG_DIR\" && ./auto-update.sh" >&2
+  exit 1
+}
+
 OS="$(uname)"
 case "$OS" in
-  Darwin) configure_macos ;;
-  Linux)  configure_linux ;;
+  Darwin) [[ "$AUTO_UPDATE" == "yes" ]] && require_sudo; configure_macos ;;
+  Linux)  require_sudo; configure_linux ;;
   *) echo "auto-update.sh only knows macOS and Linux." >&2; exit 1 ;;
 esac
