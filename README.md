@@ -78,6 +78,23 @@ pulled a big change? Check that change's own notes — e.g. `./cleanup.sh`
 exists specifically to clear leftover `dx`/Docker-context state from before
 the `machines/` system existed.
 
+### Several users on one machine
+
+Each user clones this repo into their own `~/.config` and runs `setup.sh`.
+They share one `machines/<hostname>.zsh` (profiles are per machine, not
+per user). Package installs and OS auto-updates are machine-wide, so only
+one user with sudo runs a plain `./setup.sh`. Every other user runs:
+
+```bash
+./setup.sh --user-only
+```
+
+That skips everything needing sudo and only does the per-user parts:
+Claude skill links, the `bat` symlink, a private `starship` in
+`~/.local/bin` if there's no machine-wide one yet, and the profile git sync.
+Their login shell must also be zsh for `.zshrc` to load
+(`chsh -s "$(command -v zsh)"`).
+
 If you want passwordless SSH into a server (not automated — see "SSH
 access to servers" below), that's the last step on a server machine.
 

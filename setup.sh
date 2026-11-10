@@ -15,7 +15,7 @@ usage() {
   cat <<EOF
 Usage: $(basename "$0") [--trade-republic=yes|no] [--profile=desktop|cli]
                  [--auto-update=yes|no] [--auto-update-reboot=yes|no]
-                 [--auto-update-reboot-time=HH:MM] [--force]
+                 [--auto-update-reboot-time=HH:MM] [--force] [--user-only]
 
 Creates machines/<hostname>.zsh for this machine (skipped if it already
 exists, unless --force), then always installs CLI dependencies, links
@@ -30,6 +30,9 @@ desktop profile also wires up the daily git-fetch launchd job and IdeaVim
   --auto-update-reboot=yes|no    Linux only: reboot itself when an update needs it. Default yes.
   --auto-update-reboot-time=HH:MM  Linux only: local-time maintenance window. Default 04:00.
   --force                        Re-ask and overwrite an existing machines/<hostname>.zsh.
+  --user-only                    Skip machine-wide steps that need sudo (apt packages,
+                                   auto-update.sh) -- for a second, non-sudo user on a
+                                   machine a sudo user has already set up.
 
 With no flags, prompts interactively the first time. Non-interactively (no
 TTY) on a machine with no existing profile, --trade-republic and --profile
@@ -43,6 +46,7 @@ AUTO_UPDATE=""
 AUTO_UPDATE_REBOOT=""
 AUTO_UPDATE_REBOOT_TIME=""
 FORCE="no"
+USER_ONLY="no"
 
 for arg in "$@"; do
   case "$arg" in
@@ -52,6 +56,7 @@ for arg in "$@"; do
     --auto-update-reboot=*) AUTO_UPDATE_REBOOT="${arg#*=}" ;;
     --auto-update-reboot-time=*) AUTO_UPDATE_REBOOT_TIME="${arg#*=}" ;;
     --force) FORCE="yes" ;;
+    --user-only) USER_ONLY="yes" ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $arg" >&2; usage; exit 1 ;;
   esac
@@ -63,10 +68,11 @@ case "$OS" in
   *) echo "setup.sh only automates macOS and Linux. See README.md for Windows." >&2; exit 1 ;;
 esac
 
-# Package installs and auto-update.sh both need sudo. Check up front and stop
-# before doing anything if it can't work. Otherwise every sudo call fails on
-# its own (e.g. when run via `!` inside Claude Code, which has no TTY) and the
-# run still ends with "Done."
+# Machine-wide steps (package installs, auto-update.sh) need sudo. Check up
+# front and stop before doing anything if it can't work. Otherwise every sudo
+# call fails on its own (e.g. when run via `!` inside Claude Code, which has
+# no TTY) and the run still ends with "Done." --user-only skips those steps,
+# so it skips this check too.
 require_sudo() {
   [[ $EUID -eq 0 ]] && return 0
   sudo -n true 2>/dev/null && return 0
@@ -77,9 +83,10 @@ require_sudo() {
   fi
   echo "setup.sh needs sudo, but can't get a password prompt (no terminal)." >&2
   echo "Run it from a normal terminal instead: cd \"$CONFIG_DIR\" && ./setup.sh" >&2
+  echo "Or, as a user without sudo, skip the machine-wide steps: ./setup.sh --user-only" >&2
   exit 1
 }
-require_sudo
+[[ "$USER_ONLY" == "yes" ]] || require_sudo
 
 HOST="$(scutil --get LocalHostName 2>/dev/null || hostname -s)"
 PROFILE_FILE="$MACHINES_DIR/$HOST.zsh"
@@ -214,12 +221,6 @@ install_dependencies_linux() {
   sudo apt-get update
   sudo apt-get install -y zsh fzf zoxide bat jq zsh-autosuggestions zsh-syntax-highlighting
 
-  # Debian/Ubuntu ship bat's binary as `batcat` (name clash with another package).
-  if ! command -v bat >/dev/null 2>&1 && command -v batcat >/dev/null 2>&1; then
-    mkdir -p "$HOME/.local/bin"
-    ln -sf "$(command -v batcat)" "$HOME/.local/bin/bat"
-  fi
-
   # eza isn't in every release's default apt repos yet -- fall back to eza's
   # own apt repo if the plain install fails.
   if ! command -v eza >/dev/null 2>&1 && ! sudo apt-get install -y eza 2>/dev/null; then
@@ -234,19 +235,47 @@ install_dependencies_linux() {
     sudo apt-get install -y eza
   fi
 
-  # starship has no apt package -- use its official installer.
+  # starship has no apt package -- use its official installer (to
+  # /usr/local/bin, so every user on the machine gets it).
   if ! command -v starship >/dev/null 2>&1; then
     curl -sS https://starship.rs/install.sh | sh -s -- -y
   fi
 }
 
-echo "Installing CLI dependencies..."
-if [[ "$OS" == "Darwin" ]]; then
-  install_dependencies_macos || echo "Dependency install had issues -- see above."
+# Per-user pieces that need no sudo. Runs for every user, --user-only or not.
+install_user_tools_linux() {
+  mkdir -p "$HOME/.local/bin"
+
+  # Debian/Ubuntu ship bat's binary as `batcat` (name clash with another package).
+  if ! command -v bat >/dev/null 2>&1 && command -v batcat >/dev/null 2>&1; then
+    ln -sf "$(command -v batcat)" "$HOME/.local/bin/bat"
+  fi
+
+  # No machine-wide starship (a sudo user hasn't run setup.sh yet): install a
+  # private copy into ~/.local/bin rather than leaving the prompt broken.
+  if ! command -v starship >/dev/null 2>&1; then
+    curl -sS https://starship.rs/install.sh | sh -s -- -y -b "$HOME/.local/bin"
+  fi
+}
+
+# Machine-wide steps: done once per machine, by a sudo user. A second user on
+# the same machine runs --user-only and relies on what the sudo user set up.
+if [[ "$USER_ONLY" == "yes" ]]; then
+  echo "--user-only: skipping machine-wide steps (CLI packages, OS auto-updates)."
+  echo "A user with sudo on this machine runs those with a plain ./setup.sh."
 else
-  install_dependencies_linux || echo "Dependency install had issues -- see above."
+  echo "Installing CLI dependencies..."
+  if [[ "$OS" == "Darwin" ]]; then
+    install_dependencies_macos || echo "Dependency install had issues -- see above."
+  else
+    install_dependencies_linux || echo "Dependency install had issues -- see above."
+  fi
 fi
 echo
+
+if [[ "$OS" == "Linux" ]]; then
+  install_user_tools_linux || echo "Per-user tool setup had issues -- see above."
+fi
 
 # --- Steps that apply to every machine -------------------------------------
 
@@ -256,9 +285,11 @@ if [[ -x "$CONFIG_DIR/ai/bridges/link-claude.sh" ]]; then
   echo
 fi
 
-echo "Configuring OS auto-updates..."
-"$CONFIG_DIR/auto-update.sh" || echo "auto-update.sh had issues -- see above."
-echo
+if [[ "$USER_ONLY" != "yes" ]]; then
+  echo "Configuring OS auto-updates..."
+  "$CONFIG_DIR/auto-update.sh" || echo "auto-update.sh had issues -- see above."
+  echo
+fi
 
 # --- Desktop-only steps (macOS) ----------------------------------------------
 

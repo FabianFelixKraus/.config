@@ -86,6 +86,20 @@ manual `ssh-keygen` + `ssh-copy-id` workflow instead of scripted. A
 `~/.ssh/config` host-alias file *could* be tracked here later (no secrets
 in it) — intentionally not done yet, only on request.
 
+## Several users per machine: `--user-only`, profiles stay per machine
+
+Some machines (e.g. the VPS `MYnSkiRv3CrM`: users `fflx` with sudo,
+`bitcoin` meant to run without it) have several users, each with their
+own clone at `~/.config`. Profiles stay keyed by hostname, not user,
+because everything in them (TR, cli/desktop, auto-update) is a machine
+fact. Machine-wide steps (apt/brew packages, `auto-update.sh`) are done
+once by a sudo user; other users run `./setup.sh --user-only`, which skips
+those steps *and* the up-front sudo check. Without the flag, `setup.sh`
+still fails fast when sudo can't prompt (no TTY, e.g. `!` in Claude
+Code), on purpose: otherwise every sudo call fails separately and the run
+still prints "Done." `doctor.sh` hints for machine-wide problems say "as a
+user with sudo" for the same reason.
+
 ## `setup.sh` auto-commits (and best-effort pushes) its own profile
 
 The one file `setup.sh` writes (`machines/<hostname>.zsh`) is

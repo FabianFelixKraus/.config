@@ -12,6 +12,10 @@ PROFILE_FILE="$CONFIG_DIR/machines/$HOST.zsh"
 
 PASS=0; WARN=0; FAIL=0
 
+# Packages and OS auto-updates are machine-wide: on a machine shared by
+# several users, only one with sudo can fix them (a --user-only user can't).
+MACHINE_FIX="./setup.sh, as a user with sudo (machine-wide)"
+
 pass() { printf "  \033[32m✓\033[0m %s\n" "$1"; PASS=$((PASS + 1)); }
 warn() { printf "  \033[33m!\033[0m %s\n" "$1"; [[ -n "${2:-}" ]] && printf "      -> %s\n" "$2"; WARN=$((WARN + 1)); }
 fail() { printf "  \033[31m✗\033[0m %s\n" "$1"; [[ -n "${2:-}" ]] && printf "      -> %s\n" "$2"; FAIL=$((FAIL + 1)); }
@@ -42,17 +46,22 @@ fi
 echo
 
 echo "=== CLI dependencies ==="
-for tool in eza starship fzf zoxide jq; do
+for tool in eza fzf zoxide jq; do
   if command -v "$tool" >/dev/null 2>&1; then
     pass "$tool installed"
   else
-    warn "$tool missing" "./setup.sh"
+    warn "$tool missing" "$MACHINE_FIX"
   fi
 done
+if command -v starship >/dev/null 2>&1; then
+  pass "starship installed"
+else
+  warn "starship missing" "$MACHINE_FIX, or ./setup.sh --user-only for a private copy"
+fi
 if command -v bat >/dev/null 2>&1 || command -v batcat >/dev/null 2>&1; then
   pass "bat/batcat installed"
 else
-  warn "bat missing" "./setup.sh"
+  warn "bat missing" "$MACHINE_FIX"
 fi
 for plugin in zsh-autosuggestions zsh-syntax-highlighting; do
   found="no"
@@ -63,7 +72,7 @@ for plugin in zsh-autosuggestions zsh-syntax-highlighting; do
   ; do
     [[ -f "$p" ]] && found="yes"
   done
-  if [[ "$found" == "yes" ]]; then pass "$plugin installed"; else warn "$plugin missing" "./setup.sh"; fi
+  if [[ "$found" == "yes" ]]; then pass "$plugin installed"; else warn "$plugin missing" "$MACHINE_FIX"; fi
 done
 echo
 
@@ -120,11 +129,11 @@ if [[ "$OS" == "Linux" ]]; then
     if [[ -f "$DROPIN" ]] && (command -v unattended-upgrades >/dev/null 2>&1 || dpkg -l unattended-upgrades >/dev/null 2>&1); then
       pass "unattended-upgrades installed and configured"
     else
-      warn "auto_update=yes but unattended-upgrades isn't set up" "./auto-update.sh"
+      warn "auto_update=yes but unattended-upgrades isn't set up" "./auto-update.sh, as a user with sudo (machine-wide)"
     fi
   else
     if [[ -f "$DROPIN" ]]; then
-      warn "auto_update=no but the drop-in config still exists" "./auto-update.sh"
+      warn "auto_update=no but the drop-in config still exists" "./auto-update.sh, as a user with sudo (machine-wide)"
     else
       pass "auto-updates correctly off"
     fi
@@ -141,7 +150,7 @@ elif [[ "$OS" == "Darwin" ]]; then
     if [[ "$val" == "1" ]]; then
       pass "macOS security auto-updates enabled"
     else
-      warn "auto_update=yes but macOS security auto-updates aren't enabled" "./auto-update.sh"
+      warn "auto_update=yes but macOS security auto-updates aren't enabled" "./auto-update.sh, as a user with sudo (machine-wide)"
     fi
   else
     pass "auto_update=no (macOS Software Update settings left untouched)"
