@@ -1,4 +1,18 @@
 # =============================================================================
+# 0. MACHINE PROFILE
+# =============================================================================
+# Per-machine decisions (Trade Republic tooling on/off, desktop vs. CLI-only),
+# tracked in git under machines/ so they sync across every machine via a
+# normal `git pull`. Add/edit machines/<hostname>.zsh to change a decision —
+# see README.md -> "Machine profiles".
+
+_machine_id="$(scutil --get LocalHostName 2>/dev/null || hostname -s)"
+_machine_profile="$HOME/.config/machines/$_machine_id.zsh"
+[ -f "$_machine_profile" ] || _machine_profile="$HOME/.config/machines/default.zsh"
+[ -f "$_machine_profile" ] && source "$_machine_profile"
+unset _machine_id _machine_profile
+
+# =============================================================================
 # 1. GLOBAL ENVIRONMENT & PATH BUILDER
 # =============================================================================
 # Start with base paths and build up systematically
@@ -156,19 +170,26 @@ export PATH="/Users/fabiankraus/.rd/bin:$PATH"
 # Prefer Homebrew's kubectl (kubernetes-cli) over Rancher Desktop's bundled copy
 export PATH="/opt/homebrew/bin:$PATH"
 
-# dx shell completion
-eval "$(dx completion zsh)"
+# =============================================================================
+# 7. TRADE REPUBLIC TOOLING (dx)
+# =============================================================================
+# Only active when the current machine's profile sets CONFIG_TRADE_REPUBLIC=yes
+# (see section 0 above). Off by default everywhere else.
+if [ "$CONFIG_TRADE_REPUBLIC" = "yes" ]; then
+  # dx shell completion
+  command -v dx >/dev/null 2>&1 && eval "$(dx completion zsh)"
 
-# >>> dx ai-kit (managed — do not edit) >>>
-[ -r /Users/fabiankraus/.traderepublic/ai-kit/ai-kit-env.sh ] && source /Users/fabiankraus/.traderepublic/ai-kit/ai-kit-env.sh
-# <<< dx ai-kit <<<
+  # >>> dx ai-kit (managed — do not edit) >>>
+  [ -r /Users/fabiankraus/.traderepublic/ai-kit/ai-kit-env.sh ] && source /Users/fabiankraus/.traderepublic/ai-kit/ai-kit-env.sh
+  # <<< dx ai-kit <<<
 
-# >>> dx docker (managed — do not edit) >>>
-[ -r /Users/fabiankraus/.traderepublic/dx-docker/env.sh ] && source /Users/fabiankraus/.traderepublic/dx-docker/env.sh
-# <<< dx docker <<<
+  # >>> dx docker (managed — do not edit) >>>
+  [ -r /Users/fabiankraus/.traderepublic/dx-docker/env.sh ] && source /Users/fabiankraus/.traderepublic/dx-docker/env.sh
+  # <<< dx docker <<<
 
-# Always use the dx Docker context. dx-docker/env.sh exports DOCKER_HOST, which makes the
-# docker CLI ignore contexts and report "default". DOCKER_CONTEXT also wins over a
-# currentContext that Rancher Desktop rewrites. Testcontainers reads ~/.testcontainers.properties.
-unset DOCKER_HOST
-export DOCKER_CONTEXT=dx
+  # Always use the dx Docker context. dx-docker/env.sh exports DOCKER_HOST, which makes the
+  # docker CLI ignore contexts and report "default". DOCKER_CONTEXT also wins over a
+  # currentContext that Rancher Desktop rewrites. Testcontainers reads ~/.testcontainers.properties.
+  unset DOCKER_HOST
+  export DOCKER_CONTEXT=dx
+fi

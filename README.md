@@ -4,32 +4,56 @@
 
 ```bash
 git clone https://github.com/FabianFelixKraus/.config.git ~/.config
-
-# Neovim (if not already at ~/.config/nvim)
-# Nothing needed — nvim reads from ~/.config/nvim by default.
-
-# Claude Code custom skills
-ln -sf ~/.config/claude/commands ~/.claude/commands
-
-# iTerm2 (only needed on machines where WezTerm isn't available)
-brew install --cask font-jetbrains-mono font-symbols-only-nerd-font
-mkdir -p ~/Library/"Application Support"/iTerm2/DynamicProfiles
-ln -sf ~/.config/iterm2/DynamicProfiles/fabian.json ~/Library/"Application Support"/iTerm2/DynamicProfiles/fabian.json
-
-# Daily git fetch (macOS only, via launchd)
-ln -sf ~/.config/git/launchd/com.fabiankraus.git-fetch-all.plist ~/Library/LaunchAgents/com.fabiankraus.git-fetch-all.plist
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.fabiankraus.git-fetch-all.plist
-
-# AeroSpace tiling window manager
-# Nothing to symlink — AeroSpace natively falls back to ~/.config/aerospace/aerospace.toml.
-brew install --cask nikitabobko/tap/aerospace
-open -a AeroSpace   # first launch triggers the Accessibility permission prompt — approve it
-
-# IdeaVim (IntelliJ/JetBrains IDEs) — symlink covers older IdeaVim versions without XDG support
-ln -sf ~/.config/ideavim/ideavimrc ~/.ideavimrc
+cd ~/.config && ./setup.sh
 ```
 
-Then in iTerm2: **Preferences → Profiles**, select **"Fabian (Catppuccin Macchiato)"**, right-click it → **Set as Default**.
+`setup.sh` asks two questions — see "Machine profiles" below — records the
+answer in `machines/<hostname>.zsh`, links Claude Code skills
+(`ai/bridges/link-claude.sh`), and, on a `desktop` profile, wires up the
+iTerm2 Dynamic Profile and the daily git-fetch launchd job. It prints the
+few steps it can't automate (font casks, setting the iTerm2 profile as
+default, granting AeroSpace Accessibility access) at the end. Re-run it any
+time; it won't overwrite an existing profile unless you pass `--force`.
+
+Already set up and just pulled this change? Run `./cleanup.sh` once to
+check for and clear any leftover `dx`/Docker-context state from before the
+`machines/` profile system existed.
+
+Neovim needs nothing extra — it reads from `~/.config/nvim` by default.
+
+### Machine profiles
+
+This repo is shared across every machine, but a couple of decisions are
+per-machine, not universal:
+
+- **Trade Republic tooling (`dx`)** — the `dx` CLI, `ai-kit`, and the forced
+  `DOCKER_CONTEXT=dx` only make sense on a Trade Republic machine. They are
+  **off by default** and must be opted into per machine.
+- **`desktop` vs. `cli`** — whether this machine runs the full desktop app
+  set (AeroSpace, iTerm2, Karabiner, …) or is CLI-only (e.g. a remote box
+  you only `nvim`/shell into).
+
+These decisions live in git as plain `zsh` files under `machines/`, named
+by `scutil --get LocalHostName` (falls back to `hostname -s` on
+non-macOS), so they sync to every machine on the next `git pull` — ask
+Claude to add or flip one and commit it, no manual editing required:
+
+```
+machines/
+  default.zsh                  # fallback when no file matches this hostname
+  Fabians-MacBook-Pro-4.zsh     # trade_republic=no,  profile=desktop
+```
+
+Each file just exports two variables, read by `.zshrc` section 0:
+
+```zsh
+export CONFIG_TRADE_REPUBLIC="no"   # yes | no
+export CONFIG_PROFILE="desktop"      # desktop | cli
+```
+
+To add a new machine (e.g. your Trade Republic laptop), run
+`scutil --get LocalHostName` on it, create
+`machines/<that-name>.zsh` with the two exports above, and commit it.
 
 For AeroSpace: on first launch, grant **Accessibility** access when prompted (System Settings → Privacy & Security → Accessibility). Without it, AeroSpace can't manage windows.
 
@@ -58,7 +82,7 @@ WezTerm needs no change. `wezterm/wezterm.lua` sets
    ```
 3. Claude Code custom skills (no admin required):
    ```cmd
-   mklink /J "%USERPROFILE%\.claude\commands" "%USERPROFILE%\.config\claude\commands"
+   mklink /J "%USERPROFILE%\.claude\skills" "%USERPROFILE%\.config\ai\skills"
    ```
 
 ## What's included
@@ -69,7 +93,8 @@ WezTerm needs no change. `wezterm/wezterm.lua` sets
 | `wezterm/`  | WezTerm terminal configuration |
 | `iterm2/`   | iTerm2 Dynamic Profile + Catppuccin Macchiato color preset (fallback for machines without WezTerm) |
 | `starship/` | Starship prompt theme          |
-| `claude/`   | Claude Code custom skills      |
+| `ai/`       | Claude Code custom skills + agent tooling (bridged into `~/.claude/skills` by `ai/bridges/link-claude.sh`) |
 | `git/`      | Daily `git fetch` sweep of `~/Documents` repos (script + launchd job) |
 | `aerospace/`| AeroSpace tiling window manager config (workspace switching, layouts) |
 | `ideavim/`  | IdeaVim config (routes yank/delete/paste through the macOS clipboard, so Maccy captures them) |
+| `machines/` | Per-machine decisions (Trade Republic tooling on/off, desktop vs. CLI profile) — see "Machine profiles" above |

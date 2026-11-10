@@ -6,6 +6,8 @@
 !.gitmodules
 !.zshrc
 !README.md
+!setup.sh
+!cleanup.sh
 !nvim/
 !nvim/**
 !wezterm/
@@ -25,6 +27,8 @@
 !git/launchd/**
 !aerospace/
 !aerospace/**
+!machines/
+!machines/**
 !VERSION
 !.cz.toml
 
