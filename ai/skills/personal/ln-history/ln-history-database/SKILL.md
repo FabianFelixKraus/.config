@@ -10,7 +10,25 @@ description: >
 # ln-history-database blueprint
 
 The `lnhistory` database stores Bitcoin Lightning Network gossip messages collected
-by one or more collector nodes. The tool for querying it is
+by one or more collector nodes.
+
+> **Row counts and sizes last verified 2026-08-25.** They drift fast — `channel_updates`
+> alone doubled between the original notes and that check, and several figures in this
+> file were wrong by 3.6×, 84×, or (for the "empty" staging tables) infinitely.
+> **Before relying on any count or size below, re-read it from the catalog** — this is
+> free and takes a second:
+>
+> ```sql
+> SELECT relname, reltuples::bigint, pg_size_pretty(pg_total_relation_size(oid))
+> FROM pg_class WHERE relkind='r' AND relnamespace='public'::regnamespace
+> ORDER BY pg_total_relation_size(oid) DESC;
+> -- and for column selectivity, never count(*):
+> SELECT attname, null_frac, most_common_vals, most_common_freqs
+> FROM pg_stats WHERE tablename='<t>' AND attname='<c>';
+> ```
+>
+> Note `btc_usd_ohlc` (151,391 rows, 21 MB) also lives in `public` — it is
+> price-collector data, not gossip, and is not documented in this file. The tool for querying it is
 `~/.config/ai/tools/ln_db_query.py` — it requires the project venv:
 
 ```
@@ -50,12 +68,233 @@ This happened to `node_addresses` on 2026-07-21: the new table came up with
 
 ```sql
 SELECT relname, relacl FROM pg_class WHERE relname IN ('X', 'X_old');
-GRANT SELECT ON X TO ai_reader;   -- plus grafanareader, and any other reader role
+GRANT SELECT ON X TO ai_reader, grafanareader;   -- plus any other reader role
 ```
+
+`yannik` (added 2026-08-13) is **exempt** — it has
+`ALTER DEFAULT PRIVILEGES FOR ROLE admin IN SCHEMA public GRANT SELECT ON TABLES`,
+so any table admin creates is readable by it from birth, rename-swap included.
+Consider doing the same for `ai_reader` / `grafanareader` to retire this hazard.
+
+## Roles
+
+| role | login | privileges |
+|---|---|---|
+| `admin` | yes | superuser — `.env.migration`, `/home/bitcoin/ln-history-research/.env` |
+| `ai_reader` | yes | SELECT on public (explicit per-table grants) — `analysis/.env` |
+| `grafanareader` | yes | SELECT on public (explicit per-table grants) |
+| `yannik` | yes | SELECT on all of public + default privileges, owns schema `yannik` for scratch tables/matviews, `pg_read_all_stats`, TEMP; conn limit 10; `statement_timeout=60min`, `idle_in_transaction_session_timeout=15min` (both session-overridable) |
+
+No reader role has USAGE on the `api` schema (`api_keys`, `usage`) — keep it that way.
 
 The same applies to constraint/index names: they follow the OID too, so a swapped-in
 table keeps its `*_new_*` names until explicitly renamed (which can only happen after
 the old table is dropped, since the canonical names are still occupied by it).
+
+---
+
+## ⚠️ `random_page_cost` is set in three places — command line wins
+
+**Changed 2026-08-25: effective value is now `1.1`** (was `4`, the spinning-disk default,
+on an NVMe box that already had `effective_io_concurrency = 200`). The stale value was
+suppressing index use database-wide.
+
+The value is pinned in **three** places, and they disagree. Precedence, highest first:
+
+| set where | value | how to change | takes effect |
+|---|---|---|---|
+| `ALTER DATABASE lnhistory SET` | **1.1** ← *effective* | `ALTER DATABASE lnhistory SET random_page_cost = x;` | new sessions, no restart |
+| container command line (`docker-compose.yaml:294`, `-c random_page_cost=4`) | 4 | edit compose, recreate container | needs a DB restart |
+| `postgresql.auto.conf` (`ALTER SYSTEM`) | 1.1 | `ALTER SYSTEM SET …; SELECT pg_reload_conf();` | only if the two above are cleared |
+
+**`ALTER SYSTEM` alone does nothing here** — the command-line option overrides it. The
+database-level setting is the only lever that works without recreating the container.
+If you ever `ALTER DATABASE … RESET random_page_cost`, the value silently reverts to 4
+from the command line. **The compose file should be corrected at the next planned
+restart** so all three agree; until then, leave the database-level setting in place.
+
+Measured impact on the state-change extraction over `channel_updates` (see
+`idx_cu_topology_events` below) — each step was necessary, the index alone did nothing:
+
+| stage | ordered-extraction cost | plan |
+|---|---:|---|
+| baseline | 27,879,717 | Seq Scan 117 GB + 71M-row external sort |
+| + partial covering index | 27,879,717 | **unchanged — planner ignored it** |
+| + `random_page_cost` 1.1 | 10,286,135 | Index Only Scan, sort eliminated |
+| + `VACUUM` (VM 86.1% → 100%) | **1,547,572** | Index Only Scan, no heap fetches |
+
+Single-channel event history over the same path went from a seq scan to **cost 53**.
+
+---
+
+## ⚠️ `channel_closures` records the FUNDING tx for 23,551 channels (4.6%)
+
+**Found and verified against Bitcoin Core 2026-08-25.** For 23,551 closed channels,
+`closing_txid` / `closing_height` / `closing_timestamp` describe the channel's **funding**
+transaction, not its close.
+
+Proof: for each sampled row, the tx at `closing_txid`, at the scid's output index, has a
+`witness_v0_scripthash` output whose value equals `channels.capacity_sat` **exactly** —
+that is the 2-of-2 funding output. The channels *are* genuinely closed (the funding output
+is spent on-chain); only the recorded transaction is wrong.
+
+**Detector — exact, cheap, and far better than any timestamp heuristic:**
+
+```sql
+SELECT count(*) FROM channels c JOIN channel_closures cl ON cl.gossip_id = c.gossip_id
+WHERE cl.closing_height = (c.scid >> 40);     -- closes in its own funding block
+```
+
+**Consequences:**
+- `closing_timestamp = funding_timestamp` for 23,548 of them, so the channel has **zero
+  lifetime and is invisible to every point-in-time query** — `funding_timestamp <= T AND
+  closing_timestamp > T` can never be true. Any snapshot, graph build or open-channel
+  count silently omits 4.6% of closed channels.
+- The closure economics are computed from the wrong transaction and are garbage:
+  `mining_fee_sat = 0` in **23,550 of 23,551** rows (against 38 of 441,809 for correct
+  closures), and `settled_balance_sat` averages 108.5M sat versus 13.1M — 8× inflated
+  because it is reading funding outputs.
+
+`mining_fee_sat = 0` is therefore a second, independent signature of the same bug.
+
+#### FIXED and backfilled 2026-08-26
+
+Writer fixed in **chain-enricher 0.6.1**: the close is now the *earliest confirmed*
+scripthash-history entry above the funding height, never `history[-1]`. Unconfirmed
+spends are skipped rather than processed. Backfill repaired 23,567 rows in 32 min via
+batched Fulcrum calls.
+
+| check | before | after |
+|---|---:|---:|
+| `closing_height = scid >> 40` | 23,551 | **6** |
+| zero-lifetime (`closing_timestamp <= funding_timestamp`) | 23,548 | **3** |
+| `mining_fee_sat = 0` | 23,550 | **9** |
+| mean / median `mining_fee_sat` | 0 / 0 | **440 / 236** |
+
+The residual 6 are channels whose spend was still unconfirmed — the fixed worker picks
+them up once it confirms. Backup: `repair_20260826_closures` (23,573 rows, includes
+`scid` and both timestamps; restore from it to roll back).
+
+**Closure type was wrong for 59% of them** — 12,546 force→mutual and 1,380 mutual→force
+on reclassification, because the old value was derived from the funding tx's input
+sequence. Do not trust `channel_closures.type` on any row predating this repair.
+
+> **⚠️ Height matching alone is not sufficient — match the funding OUTPOINT.**
+> The Electrum scripthash identifies a *script*, not an outpoint, so a scripthash can
+> carry activity unrelated to this channel's funding output. The height-based backfill
+> mis-selected **36 of 23,573 rows (0.15%)**, caught by flagging
+> `mining_fee_sat > capacity_sat * 0.05` and re-checked against the chain. 35 were
+> re-selected by requiring an input spending `(funding_txid, scid & 0xFFFF)`; the last
+> one (`scid 761140222877237249`) had an **unspent funding output** — it is still open
+> and had been wrongly closed by the *original* enricher, so its closure row was deleted
+> and `closing_timestamp` reset to NULL.
+>
+> A verification sample of 300 repaired rows confirmed 300/300 spend the correct funding
+> outpoint, and 400/400 sampled channels are genuinely closed on-chain.
+>
+> **The live worker now does this check too, as of chain-enricher 0.6.2** — it resolves the
+> funding txid from the history entry at the funding height and accepts only a candidate
+> spending `(funding_txid, scid & 0xFFFF)`. Costs no extra RPC: the candidate tx was already
+> being fetched to compute financials, so that fetch was moved up and reused. Until 0.6.2
+> the worker would silently *re-close* a wrongly-closed channel after the row was deleted —
+> observed on `scid 761140222877237249`, which is genuinely open.
+
+#### The "7.1% bad fees" claim was wrong — retracted 2026-08-26
+
+An earlier version of this section reported 31,293 of 442,062 closure rows (7.1%) as
+having implausible fees, based on `mining_fee_sat > capacity_sat * 0.05`. **That was a
+threshold artifact, not a defect.** The ratio simply tracks channel size:
+
+| capacity | closures | flagged >5% | median fee |
+|---|---:|---:|---:|
+| < 100k sat | 31,327 | 57.1% | 2,810 |
+| 100k–500k | 61,510 | 20.3% | 2,811 |
+| 500k–2M | 100,192 | 0.9% | 2,061 |
+| ≥ 2M | 249,125 | **0.0%** | 1,422 |
+
+The *absolute* median fee is a normal 1.4–2.8k sat in every band — small channels just
+have a small denominator. Verified on-chain over 200 sampled flagged rows: **200/200**
+had the correct closing tx, and `mining_fee_sat` equalled
+`funding_output_value − sum(vout)` exactly. `capacity_sat` matched the real funding output
+value in every case. **The fee formula is correct.**
+
+**Use an absolute threshold to find real corruption, not a ratio.** `mining_fee_sat >
+1_000_000` returned 33 rows, of which on-chain checking showed 19 genuine and **14
+mis-selected** — all with fee ≈ capacity, the signature of a recorded tx that does not
+spend the funding outpoint. Those 14 were repaired 2026-08-26 by outpoint matching
+(backup: `repair_20260826b_closures`). Result: fees ≥ 0.1 BTC went 9 → **0**,
+`mining_fee_sat >= capacity_sat` went 1 → **0**, max fee 999,685,878 → 7,425,158.
+
+Current health checks worth keeping in monitoring:
+
+```sql
+-- must stay ~0 (residue = spends not yet confirmed)
+SELECT count(*) FROM channels c JOIN channel_closures cl USING (gossip_id)
+WHERE cl.closing_height = (c.scid >> 40);
+-- must stay 0: a fee cannot equal or exceed the channel's capacity
+SELECT count(*) FROM channel_closures cl JOIN channels c USING (gossip_id)
+WHERE cl.mining_fee_sat >= c.capacity_sat;
+```
+
+### Separately: 3 channels whose `scid` points at the closing tx
+
+A different defect, 3 rows (`1054528408251269120`, `1057089170841862145`,
+`1059249711032631296`). Here `closing_txid` is a real close (output value does *not* match
+capacity), but `scid >> 40` and the scid's tx-index match the **closing** transaction's
+block and position. Tracing `vin[0]` finds the real funding tx 44–210 blocks earlier.
+Because `announceable_timestamp` is derived from the scid, it is wrong for these too —
+which is what the `announceable - funding` heuristic actually flags.
+
+**Do not use `announceable_timestamp - funding_timestamp` as the corruption detector.**
+Re-measured 2026-08-25 over all 508,258 channels: median 46:04, p01 12:35, p99 1:54:48,
+and only **6** rows outside [0, 1 day] — 3 of which are false positives. Blocks 933233/933238
+are a worked example: funding 15:44:10, announceable 15:28:07, delta −16:03, and **both
+values match Core exactly**. Bitcoin only requires a block timestamp to exceed the median
+of the previous 11, so the chain legitimately runs backwards; block 933234 (15:18:33) is
+25 minutes *earlier* than 933233. The heuristic assumes a monotonicity Bitcoin does not
+provide.
+
+`announceable_timestamp` coverage is now **100%** (508,258 of 508,258, 0 missing), so the
+"chain-enricher never backfills it" warning elsewhere in this file is out of date.
+
+---
+
+## `gossip_first_observed` — the real receipt time (built 2026-08-25)
+
+`gossip_inventory.first_seen_at` stores the originator timestamp, not a receipt time, and
+only ~25% of the archive was ever observed by our collectors — so it cannot be repaired in
+place without leaving a column that silently mixes two meanings. This side table holds the
+answer for the rows where one exists:
+
+```sql
+CREATE TABLE gossip_first_observed AS
+  SELECT internal_id, min(seen_at) AS first_observed_at
+  FROM gossip_observations GROUP BY internal_id;
+```
+
+**69,531,060 rows; 2937 MB heap + 1489 MB PK + 520 MB (first_observed_at) = 4947 MB.**
+Range 2025-12-04 17:27:49 … 2026-08-25 20:06:21. Granted to `ai_reader`, `grafanareader`,
+`yannik`. Built in ~3 min with `work_mem = 2GB`; no lock on `gossip_inventory`, no bloat.
+
+**Presence is the discriminator**: a row here means we observed the message and this is
+when; no row means bulk-imported with no receipt time. Join on `internal_id`.
+
+Note the timestamp index is only **520 MB (7.5 bytes/row)** — btree deduplication, because
+`seen_at` values repeat heavily. A naive estimate from an all-distinct 8-byte column
+(`unique_internal_id`, 24.7 bytes/row) would have predicted ~1.6 GB.
+
+**Kept fresh hourly** by `analysis/refresh_gossip_first_observed.sh` (cron `17 * * * *`,
+added 2026-08-26; ~4 s for a day's backlog, log alongside the script). Note the column is
+`first_seen_at` — the name now means what it says, in the table where it is true. To top
+up by hand:
+
+```sql
+INSERT INTO gossip_first_observed
+SELECT o.internal_id, min(o.seen_at) FROM gossip_observations o
+WHERE o.internal_id > (SELECT max(internal_id) FROM gossip_first_observed)
+GROUP BY o.internal_id
+ON CONFLICT (internal_id) DO NOTHING;
+```
 
 ---
 
@@ -65,7 +304,7 @@ The database runs on a VPS with **8 AMD EPYC vCores, 32 GB ECC RAM, and a 600 GB
 
 ### The Golden Rule
 
-Before using `ln_db_query.py` for any complex query — aggregations, joins, or queries that touch large tables (`gossip_observations` ~95.5M rows / 56 GB, `channel_updates` ~144M rows / 147 GB, `node_announcements_complete` ~26M rows, `node_addresses` ~75.9M rows / 17 GB, etc.) — you **MUST** first run the query through `ln_db_explain.py`.
+Before using `ln_db_query.py` for any complex query — aggregations, joins, or queries that touch large tables (`channel_updates` 144.5M rows / 159 GB, `gossip_inventory` 265M rows / 80 GB, `node_announcements_complete` 30.9M rows / 44 GB, `node_addresses` 81.2M rows / 19 GB, `gossip_observations` 126M rows / 13 GB, etc.) — you **MUST** first run the query through `ln_db_explain.py`.
 
 Run the explain tool using the project venv:
 
@@ -186,13 +425,136 @@ Registry of every unique gossip message ever received.
 |---------------|---------------|----------|------------------------------------|
 | gossip_id     | varchar(64)   | NO       |                                    |
 | type          | integer       | NO       |                                    |
-| first_seen_at | timestamptz   | YES      | now()                              |
+| first_seen_at | timestamptz   | YES      | now() — **never used, see below**  |
 | internal_id   | bigint        | NO       | nextval(gossip_inventory_internal_id_seq) |
+
+### ✅ RENAMED 2026-08-26: `first_seen_at` → `sender_timestamp`
+
+**Renamed 2026-08-26** (`gossip_inventory` and `gossip_inventory_future`), with
+`gossip-processor` 0.10.4 deployed in the same window. The old name and its
+`DEFAULT now()` implied a wall-clock "when we first saw this gossip". It never was. `gossip-processor` 0.10.2 always supplies a
+value explicitly, so the `DEFAULT now()` never fires, and the value it supplies is the
+timestamp *from inside the gossip message*:
+
+```python
+# main.py:537   — gossip_ts_int is the MESSAGE's timestamp
+content = self.db.insert_content(cur, gossip_id, msg_type, raw_gossip_bytes,
+                                 parsed_obj, gossip_ts_int)
+# main.py:165-173
+dt = datetime.fromtimestamp(timestamp_int, timezone.utc)
+INSERT INTO gossip_inventory (gossip_id, type, first_seen_at) VALUES (%s, %s, %s)
+```
+
+The real receipt time (`receipt_dt`) is in scope at the call site and is passed
+correctly to `insert_observation` — so **`gossip_observations.seen_at` is trustworthy
+and `gossip_inventory.first_seen_at` is not.**
+
+Measured over the 35,246 most recent inventory rows (`internal_id > 312700000`):
+
+| check | result |
+|---|---|
+| rows whose `first_seen_at` has a sub-second component | **0 of 35,246** (message timestamps are whole unix seconds; `now()` would give microseconds) |
+| `first_seen_at <> gossip_observations.seen_at` | **104,642 of 104,661** pairs (99.98%) |
+| `seen_at - first_seen_at` | avg −323 s, range **−233 days … +155 days** |
+| oldest `first_seen_at` among the newest 35K inserts | 2026-03-24 — five months before the row existed (re-broadcast old gossip) |
+
+**Rules that follow:**
+- For "when did we first observe this gossip", use `gossip_first_observed.first_seen_at`
+  (or `min(gossip_observations.seen_at)`). Never `sender_timestamp`.
+- Any propagation-lag measurement built on `first_seen_at` computes ≈0 by construction,
+  because it is subtracting the sender timestamp from itself. The
+  `announceable_timestamp` lag recipe under `channels` is safe — it correctly uses
+  `gossip_observations.seen_at`.
+- `max(first_seen_at)` is a **future** date (2027-04-15 as of 2026-08-25); see the
+  timestamp-abuse note below. It is not clock skew on our side.
+- The rename was chosen over "fix the writer and backfill", because only ~25% of the
+  archive was ever observed by our collectors — a backfill would have left the column a
+  silent mixture of two meanings. `gossip_first_observed` carries the receipt time for
+  the rows where one exists; presence there is the discriminator.
+
+### ⚠️ Future-dated node_announcements poison the active head
+
+`gossip_inventory_future` exists to quarantine future-timestamped messages, but
+**`gossip-processor` never writes to it** (0 references in `main.py`) — it is dead code
+from an earlier pipeline, frozen at 1,942 rows. Nothing filters future timestamps today.
+
+As of 2026-08-25, `node_announcements_complete` holds **1,102 rows with
+`valid_from` in the future** (2026-11-24 … 2030-04-02), from just **4 node_ids** — two
+of which account for 1,100 in two short bursts (969 announcements stamped 2027-04-15,
+131 stamped 2026-11-24). `channel_updates` and `channels` are clean (0 future rows), so
+channel geometry is unaffected.
+
+The harm is the SCD chain: for all four nodes the future-dated row is the **active head**
+(`valid_to IS NULL`), so `WHERE valid_to IS NULL` returns it instead of the real current
+announcement. For `03a6680e…` it masks 24 legitimate announcements behind a row claiming
+2030-04-02. This is the BOLT 7 timestamp-abuse vector — a far-future timestamp
+permanently wins the "newest announcement" race, because every honest later announcement
+carries a lower timestamp and is rejected as stale.
+
+#### Repaired 2026-08-25 — and the blast radius was wider than the one table
+
+The poison had spread to four tables, not one. All of it was backed up before deletion,
+in a single transaction:
+
+| table | rows removed | backup |
+|---|---:|---|
+| `node_announcements_complete` | 1,102 | `repair_20260825_nac` |
+| `node_announcements` (filtered) | 7 | `repair_20260825_na` |
+| `node_addresses` | 1,187 | `repair_20260825_addr` |
+| `nodes` (first_seen/last_seen rebuilt, not deleted) | 4 | `repair_20260825_nodes` |
+
+`nodes` had been corrupted too: all four had a **future `last_seen`**, and `026e6215…`
+had `first_seen` *later than* `last_seen`. That matters because the API's "currently
+active" test is `last_seen >= now() - 14 days`, so these four were permanently active.
+Both columns were rebuilt as min/max over surviving announcements and channels.
+
+After the deletes the SCD head was restored: `03a6680e…` has its 24 real announcements
+back with the 2020-10-10 row as active head. The other three nodes now have **zero**
+announcements — honest, since every announcement they ever sent carried an impossible
+timestamp. They still exist in `nodes` via their channels (14, 11 and 29 respectively).
+
+Verified after: 0 future rows beyond 1 day in either announcement table, 0 orphaned
+address rows, every affected node `first_seen <= last_seen <= now()`, at most one active
+head each. **To roll back, re-insert from the four `repair_20260825_*` tables.**
+
+**Deliberately left alone: 85 rows in the 1 h–1 d future band, from 2 nodes ~4 h fast.**
+A persistently fast clock still supersedes its own announcements correctly — the chain is
+internally consistent, just shifted — so these are recoverable data, not poison.
+
+#### Ingest clamp — DEPLOYED in gossip-processor 0.10.3 (2026-08-25)
+
+`MAX_FUTURE_SKEW_SECONDS` (default **86400**, `0` disables) rejects type 257/258 whose
+originator timestamp is more than a day ahead, increments
+`gossip_future_timestamp_rejected_total{type,source}` and logs the node and skew.
+Type 256 carries no originator timestamp and is untouched — exactly why `channels` was
+never poisoned.
+
+24 h rather than 1 h is deliberate: a persistently fast clock still supersedes its own
+announcements correctly, so its chain is internally consistent and worth keeping. Only
+the un-supersedable case (months or years out) is blocked. Lower it to 3600 to also
+exclude the two ~4 h-skewed nodes.
+
+Released as `ghcr.io/ln-history/gossip-processor:0.10.3` (git tag `0.10.3`, commit
+`447d186`), compose pinned at `docker-compose.yaml:198`. Post-deploy check: all three ZMQ
+sources reconnected, lag 0.02–0.60 s, 0 errors, sequence advancing normally.
+
+**Monitor with** `increase(gossip_future_timestamp_rejected_total[1d])` — a non-zero
+value means someone is still broadcasting impossible timestamps and the clamp is earning
+its keep. The counter has no samples until the first rejection, which is normal.
 
 Constraints: PK(gossip_id), UNIQUE(internal_id).
 
-Indexes: `gossip_inventory_first_seen_at` (first_seen_at DESC),
-`gossip_inventory_type` (type), `unique_internal_id` (internal_id).
+Indexes — **verified 2026-08-25, only 3 exist** (`gossip_inventory_first_seen_at` is
+listed in older versions of this file but **does not exist**; any predicate on
+`first_seen_at` is a 31 GB seq scan, cost ~5.4M):
+
+| index | key | size | idx_scan |
+|---|---|---:|---:|
+| `gossip_inventory_pkey` | (gossip_id) | 40 GB | 35,341,360 |
+| `unique_internal_id` | (internal_id) | 6250 MB | 2 |
+| `gossip_inventory_type` | (type) | 3322 MB | 0 |
+
+**265,106,928 rows; 31 GB heap + 50 GB indexes = 80 GB.**
 
 ---
 
@@ -230,8 +592,16 @@ via `internal_collector_id` → `collectors`.
 `seen_at` = wall-clock time the collector received the message.
 `sender_timestamp` = timestamp embedded in the gossip message by its originator.
 
-**95,503,734 rows; 7797 MB total** (was 18 GB heap + 38 GB indexes = 56 GB — an
-86% reduction). One index only: the PK.
+**126,046,456 rows; 13 GB total** (6854 MB heap + 6138 MB indexes) as of 2026-08-25.
+The 2026-07-19 rebuild took it to 95,503,734 rows / 7797 MB (from 18 GB heap + 38 GB
+indexes = 56 GB — an 86% reduction); it has since grown by 30.5M rows through normal
+ingest. ~~One index only: the PK.~~ **Corrected 2026-09-03: there are three.**
+`gossip_observations_seen_at` (btree on `seen_at`) and
+`gossip_observations_internal_collector_id` were added after the rebuild. This
+matters: a time-windowed observation count is now cheap — `SELECT
+internal_collector_id, count(*) ... WHERE seen_at > now() - interval '5 minutes'
+GROUP BY 1` costs **691**, not the ~2M a seq scan would. That is what makes live
+per-collector gossip panels affordable.
 
 ### Migration record (2026-07-19)
 
@@ -284,8 +654,41 @@ because `seen_at` was set to the import wall-clock.
 Consequence: `analysis/observations.csv` must never be imported (deleted 2026-07-19).
 
 **Enumerating distinct collectors:** just read `collectors` — it is the authoritative
-7-row list, and `gossip_observations.internal_collector_id` is an FK to it. Do not
-aggregate over the 95.5M-row observations table for this.
+list (**8 rows** as of 2026-08-25; `charlie-new`, internal_collector_id 9, was added
+2026-08-01 and older versions of this file said 7), and
+`gossip_observations.internal_collector_id` is an FK to it. Do not aggregate over the
+126M-row observations table for this.
+
+### Observation coverage is sparse and blocky — only ~25% of gossip_inventory
+
+**Mapped 2026-08-25.** `gossip_observations` does not cover the archive evenly. Probing
+20k-wide `internal_id` windows every 8M shows four covered bands separated by a very
+large empty middle:
+
+| internal_id band | observed? | note |
+|---|---|---|
+| ~0 – 30M | yes, ~100% of ids | 2 collectors (alice, bob) |
+| ~32M – 38M | no | |
+| ~40M – 55M | yes | |
+| ~56M – 100M | no | |
+| ~104M – 118M | yes, ~1 obs/id | |
+| **~120M – 278M** | **no** | the bulk imports — 158M ids, zero observations |
+| ~280M – 313M+ | yes, ~35% of ids, 2.87 obs each | alice-new, bob-new, charlie-new |
+
+Estimated **~60–70M of 265M rows (~25%)** have any observation. The rest were bulk-imported
+and their observation rows were deleted in the 2026-07-19 content-policy cleanup, so
+**there is no receipt time for them and none can be reconstructed.**
+
+Consequence for anyone tempted to "fix" `first_seen_at` in place: an UPDATE from
+`min(gossip_observations.seen_at)` can only touch that ~25%, leaving the column a silent
+mixture of real receipt times and originator timestamps with **no way to tell which is
+which**. That is worse than uniformly wrong. Prefer a side table keyed on `internal_id`,
+where presence *is* the discriminator. See [[project-first-seen-at-semantics]].
+
+**Do not trust `pg_stats.n_distinct` on these big tables.** For
+`gossip_observations.internal_id` it reports 7.67M, implying 16.8 observations per
+message; direct measurement on a bounded window gives **2.87**. The sampled n_distinct
+estimator underestimates badly at this scale — measure on an `internal_id` window instead.
 
 > **Superseded:** earlier versions of this file recommended a recursive skip scan over
 > `idx_obs_collector_time` on `gossip_observations.collector_node_id`. **Both the
@@ -346,7 +749,7 @@ Indexes: PK, UNIQUE(scid), (internal_id),
 `idx_active_channels_nodes` (source_node_id, target_node_id) WHERE closing_timestamp IS NULL,
 `idx_chan_validity` (funding_timestamp DESC, closing_timestamp).
 
-~362K rows.
+**507,588 rows; 1568 MB heap + 179 MB indexes = 1747 MB** (2026-08-25).
 
 #### `announceable_timestamp` (added 2026-07-31)
 
@@ -399,7 +802,7 @@ Enum `closure_reason`: `mutual`, `force`, `breach`, `unknown`.
 Indexes: PK(gossip_id), (closing_height), (type),
 `idx_closures_fees` (mining_fee_sat), `idx_closures_ts` (closing_timestamp).
 
-~304K rows.
+**464,541 rows; 225 MB total** (2026-08-25).
 
 ---
 
@@ -428,25 +831,142 @@ per (scid, direction).
 | is_fee_update            | boolean     | YES      | fee changed vs previous      |
 | is_topology_update       | boolean     | YES      | enabled/disabled bit changed |
 | internal_id              | bigint      | YES      | → gossip_inventory.internal_id |
+| inbound_fee_base_msat    | integer     | YES      | **VIRTUAL generated** — lnd TLV 55555, signed |
+| inbound_fee_proportional_millionths | integer | YES | **VIRTUAL generated** — lnd TLV 55555, signed |
 
 Constraints: PK(gossip_id),
 FK gossip_id → gossip_inventory(gossip_id) ON DELETE CASCADE.
 
 `is_fee_update` and `is_topology_update` can both be false (no semantically
-meaningful change vs the prior update). Distribution (71M rows):
-fee_update=true ~9.4M, topology_update=true ~19.7M, neither ~44M.
+meaningful change vs the prior update).
+
+**Distribution — re-read from `pg_stats` 2026-08-25 over 144.5M rows** (the old
+"71M rows: fee ~9.4M / topology ~19.7M / neither ~44M" line was written when the
+table was half its current size and understated topology updates by 3.6×):
+
+| flag | fraction | ≈ rows |
+|---|---:|---:|
+| `is_fee_update = true` | 17.44% | ~25.2M |
+| `is_topology_update = true` | **49.01%** | **~70.8M** |
+
+Read these from `pg_stats.most_common_freqs` (free) rather than counting — a
+`count(*) WHERE is_topology_update` is a 16.7M-cost seq scan of the 117 GB heap.
+
+**Channels flap hard.** Measured over 2023-10-01 (one day, via the
+`valid_from` index, cost 399K, 2.95 s): 70,409 topology events touching 18,593 distinct
+(scid, direction) pairs — **15.0% of all directions flipped state that day** — across
+13,775 channels (19.1% of those open), at **3.79 flips per flipping direction**.
+Consequence: enabled/disabled is a high-frequency signal, not a property that can be
+meaningfully sampled at monthly resolution. Prefer a duty-cycle aggregate over an
+instantaneous read for anything time-series.
+
+**`is_fee_update` means OUTBOUND fee only** (`fee_base_msat` /
+`fee_proportional_millionths`). It does not consider the inbound fee below.
+Measured over 42,806 consecutive update pairs: inbound-fee changes are 98.4%
+co-incident with outbound changes, and only 0.10% of the "neither" bucket hides an
+inbound-only change — which is why the classifier was deliberately left alone
+rather than recomputed over 144M rows.
+
+#### Inbound fees — TLV 55555 (added 2026-08-21)
+
+`inbound_fee_base_msat` and `inbound_fee_proportional_millionths` are **PG18
+`VIRTUAL` generated columns**. Nothing is stored: they decode `raw_gossip` on read.
+The `ALTER` was **2.958 ms** with `relfilenode` unchanged — no rewrite, no backfill,
+and retroactively correct for all history back to 2024-04-29.
+
+**Why virtual and not stored:** a stored column would have meant an UPDATE over
+~32M rows (~26 GB live + 26 GB dead, index amplification across 5 indexes) — the
+shape of the operation that took 643 minutes in 2026-07-18. More importantly, a
+derived column **cannot fall to the recurring writer defect** (a new column not
+threaded into every INSERT path, which has hit this project four times), because
+`gossip-processor` never writes it at all.
+
+**What the field is.** lnd's *inbound* fee, `lnwire.Fee{BaseFee int32, FeeRate
+int32}` at TLV record type 55555 (`lnwire/typed_fee.go`), carried in the
+`channel_update` extra opaque data and **covered by the signature** (`DataToSign()`
+appends `ExtraOpaqueData`). Two BE `uint32` reinterpreted as `int32`.
+
+**It is NOT a "negative fee".** `--accept-positive-inbound-fees` defaults off in
+lnd, but that governs only what a node may *set*; ~3% of TLV-bearing rows on the
+wire carry positive rates. Observed ranges: base −1,000,000…+1,000 msat, rate
+−500,000…+10,000 ppm.
+
+**NULL vs 0 is meaningful:** NULL = no TLV in the message; `(0,0)` = record present
+and explicitly zero, i.e. lnd ≥ 0.18 with no inbound fee configured — a free
+implementation fingerprint, and ~47% of TLV-bearing rows.
+
+**Measured shape** (1,435,076-row sample, 2026-08-21). `raw_gossip` has exactly
+three lengths and the magic bytes occur at position 140 and nowhere else:
+
+| `octet_length(raw_gossip)` | meaning | share |
+|---|---|---:|
+| 131 | no `htlc_max`, no TLV | 0.5% |
+| 139 | `htlc_max`, no TLV | 77.3% |
+| 151 | `htlc_max` + 12-byte TLV | **22.2%** (~32M rows) |
+
+Live traffic is already at ~42% TLV density, so adoption is still climbing.
+
+**Decode is guarded** on the literal bytes `fd d9 03 08` at position 140; a guard
+miss yields NULL, never a wrong number. Verified against an independent Python
+`struct.unpack('>ii', …)` over 14,000 rows: **0 mismatches**.
+Drift monitor: `analysis/check_channel_update_layout_drift.sql`, run **hourly over a
+1-hour window** — at 24 h the planner abandons the `valid_from` index and seq-scans
+117 GB (cost 1.07M vs 48.7K).
+
+**⚠️ Three PG18 limitations that bite here:**
+1. **Virtual generated columns cannot be indexed.** Use a **byte-identical**
+   expression index instead — a near-miss silently produces a seq scan (verified).
+   No index has been built yet: `valid_from` correlation is −0.208, so an index pass
+   over 32M rows means 32M random heap fetches and the planner will prefer a seq scan
+   for any full-history aggregation. **Index-only scans are impossible** on these
+   columns — tested with both the covering and expression-predicate forms.
+2. **They cannot call user-defined functions** ("not yet supported"), so the decode
+   expression must be inlined and duplicated verbatim anywhere it is reused.
+3. **`NEW.<virtual column>` reads as NULL inside a BEFORE trigger.** Reading via a
+   normal `SELECT` is fine. This is why `classify_gossip_update()` could not consume
+   the inbound fee even if you wanted it to.
+
+**SQL gotcha:** in PostgreSQL `|` and `<<` bind *looser* than `-`, so
+`a<<24 | b - c` parses as `a<<24 | (b-c)`. The decode needs explicit parentheses or
+it yields plausible-looking wrong numbers.
+
+Not yet done (tracked as follow-ups): `lnhistoryclient.parse_channel_update` still
+discards these bytes — relevant because graph building and payment simulation then
+model routing cost wrong for 22% of updates — and the .NET API does not expose them
+(they must be mapped read-only there, or EF will try to write them).
 
 Indexes — **verified 2026-07-19, only 3 remain** after the remediation (the older
 8-index list above was dropped to make the bulk repair feasible and has NOT been
 fully rebuilt):
 
-| index | key | size |
-|---|---|---:|
-| `channel_updates_pkey` | (gossip_id) | 21 GB |
-| `channel_updates_scid_direction_valid_from` | (scid, direction, valid_from) | 5579 MB |
-| `channel_updates_valid_from_valid_to` | (valid_from, valid_to) | 3559 MB |
-| `channel_updates_internal_id` | (internal_id) | 3090 MB (rebuilt 2026-07-19) |
-| `idx_cu_active_head` | (scid, direction) **WHERE valid_to IS NULL** | 24 MB (added 2026-07-19) |
+Sizes and scan counts re-read 2026-08-25 (`pg_stat_user_indexes`); indexes total **42 GB**:
+
+| index | key | size | idx_scan |
+|---|---|---:|---:|
+| `channel_updates_pkey` | (gossip_id) | 26 GB | **0** |
+| `channel_updates_scid_direction_valid_from` | (scid, direction, valid_from) | 6707 MB | 44,569,120 |
+| `channel_updates_internal_id` | (internal_id) | 5500 MB | 1,356 |
+| `channel_updates_valid_from_valid_to` | (valid_from, valid_to) | 4683 MB | 25,875 |
+| `idx_cu_topology_events` | (scid, direction, valid_from) INCLUDE (channel_flags) **WHERE is_topology_update** | 3359 MB | added 2026-08-25 |
+| `idx_cu_active_head` | (scid, direction) **WHERE valid_to IS NULL** | 33 MB | 5,056,864 |
+
+**`channel_updates_pkey` is 26 GB and has never been scanned** (0 scans since stats
+reset). It cannot simply be dropped — it enforces the `gossip_id` PK and backs the
+`ON DELETE CASCADE` FK from `gossip_inventory` — but it is the single largest object
+in the database earning nothing on the read path. Worth a conversation.
+
+**`idx_cu_topology_events` (added 2026-08-25)** exists so the enabled/disabled
+state-change history can be extracted without a 117 GB seq scan. A plain index on
+`is_topology_update` would be useless (49% selectivity — the planner would ignore it);
+this one is *partial* (only the ~70.8M event rows) and *covering* (`INCLUDE
+(channel_flags)`), so the extraction becomes an index-only scan already ordered by
+(scid, direction, valid_from) — exactly the order needed to build state intervals with
+`LAG`, with no sort. Built `CONCURRENTLY` in 6 min 08 s so ingest kept writing.
+
+**It is useless on its own.** With `random_page_cost = 4` the planner ignored it entirely
+and kept seq-scanning. It only pays off combined with the corrected cost setting *and* a
+current visibility map — see the `random_page_cost` section at the top of this file for
+the measured chain.
 
 **`idx_cu_active_head` is load-bearing for ingest — do not drop it.** The
 gossip-processor SCD close (`... WHERE scid=? AND direction=? AND valid_to IS NULL`)
@@ -455,7 +975,11 @@ and **3.9 ms** with it. Its absence stalls the whole pipeline. The node tables h
 the equivalent `idx_nac_active_head` / `idx_na_active_head` on `(node_id) WHERE
 valid_to IS NULL`. See [[project-scd-active-head-indexes]].
 
-**144,207,373 rows; 117 GB heap + 30 GB indexes = 147 GB.** The heap is bloated —
+**144.9M rows; 117 GB heap + 45 GB indexes = 162 GB** (2026-08-25, after adding
+`idx_cu_topology_events`). `VACUUM (VERBOSE, ANALYZE)` on 2026-08-25 took **6 min 07 s**,
+removed 1,129,729 dead item identifiers, and took the visibility map from **86.1% to
+100.0% all-visible** (2,131,717 pages newly marked) — which is what makes index-only
+scans on this table actually index-only. Dead tuples 1,126,792 → 19,962. The heap is bloated —
 live data is ~73 GB of tuples (~80 GB as a fresh heap), so ~37 GB is reclaimable
 free space (only 76K dead tuples; already vacuumed). Correlation on
 `valid_from`/`valid_to` is ≈ −0.17, i.e. physically unordered.
@@ -499,7 +1023,8 @@ Indexes: PK,
 `idx_node_ann_validity` (valid_from DESC, valid_to),
 `idx_tmp_na_node_time` (node_id, valid_from).
 
-~22M rows. **Data quality note**: table content is not yet fully cleaned/verified.
+**30,928,060 rows; 36 GB heap + 8900 MB indexes = 44 GB** (2026-08-25).
+**Data quality note**: table content is not yet fully cleaned/verified.
 
 ---
 
@@ -516,7 +1041,9 @@ Indexes: PK(gossip_id), (internal_id),
 `idx_na_clean_node_time` (node_id, valid_from),
 `idx_na_validity` (valid_from DESC, valid_to).
 
-~7.7M rows.
+**91,320 rows; 123 MB total** (2026-08-25). An earlier version of this file said
+"~7.7M rows" — that was wrong by ~84×, and the ln-history-api skill's "filtered ~95K"
+was the correct figure.
 
 ---
 
@@ -540,7 +1067,7 @@ Indexes: `node_addresses_pkey` (id), `idx_addr_lookup` (address),
 `idx_node_addresses_internal_id` (internal_id), `node_addresses_port` (port),
 `node_addresses_type_id` (type_id).
 
-**75.9M rows; 13 GB heap + 4119 MB indexes = 17 GB.**
+**81,184,288 rows; 14 GB heap + 4780 MB indexes = 19 GB** (2026-08-25).
 
 **Join addresses by `internal_id`, not `gossip_id`.** The `internal_id` column was
 added 2026-07-21 precisely for this. `node_addresses.gossip_id` has **no index**, so
@@ -587,7 +1114,7 @@ One row per unique node public key seen in channels or announcements.
 | first_seen | timestamptz | YES      |    |
 | last_seen  | timestamptz | YES      |    |
 
-PK(node_id). Index: (first_seen, last_seen). ~47K rows.
+PK(node_id). Index: (first_seen, last_seen). **53,105 rows** (2026-08-25).
 
 ---
 
@@ -769,19 +1296,27 @@ Indexes: PK(id), (session_id), (type_id), (port). ~3,106 rows.
 
 ---
 
-## Staging tables (migration artifacts — all empty)
+## Staging tables — ALL DROPPED 2026-08-26
 
-The following tables exist but contain 0 rows. They appear to be migration
-intermediaries that were never dropped:
+> **All six are gone as of 2026-08-26.** The four empty ones were dropped deliberately.
+> `staging_worthless_cu` (16.4M rows) and `staging_worthless_na` (18.1M rows) held 5.4 GB
+> earlier the same day but had **already been dropped by something else** before that —
+> no `DROP` appears in the container log, and `log_statement` is off, so a successful DDL
+> from another session leaves no trace. Recorded here only so the disappearance is not
+> mistaken for data loss. Database is 325 GB after the cleanup.
 
-- `staging_gossip_inventory` — same schema as `gossip_inventory`
-- `staging_gossip_observations` — same schema as `gossip_observations`
-- `staging_channels` — same schema as `channels`
-- `staging_channel_updates` — same schema as `channel_updates`
-- `staging_worthless_cu` — (internal_id, gossip_id), flagged duplicate channel_updates
-- `staging_worthless_na` — (gossip_id), flagged duplicate node_announcements
+| table | rows (2026-08-25) | size | notes |
+|---|---:|---:|---|
+| `staging_worthless_na` | **18,073,064** | 3391 MB | (gossip_id), flagged duplicate node_announcements |
+| `staging_worthless_cu` | **16,444,117** | 2066 MB | (internal_id, gossip_id), flagged duplicate channel_updates |
+| `staging_channels` | 0 | 8 kB | same schema as `channels` |
+| `staging_channel_updates` | 0 | 8 kB | same schema as `channel_updates` |
+| `staging_gossip_inventory` | 0 | 0 bytes | same schema as `gossip_inventory` |
+| `staging_gossip_observations` | 0 | 0 bytes | same schema as `gossip_observations` |
 
-These can be safely dropped after confirming with the owner.
+The four genuinely-empty ones are safe to drop. The two `worthless_*` tables record
+which rows a past dedup pass judged redundant — establish whether that provenance is
+still needed before touching them.
 
 ---
 
