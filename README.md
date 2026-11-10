@@ -53,7 +53,7 @@ answer controls):
 It records your answers in `machines/<hostname>.zsh`, then — every run,
 first or repeat — it:
 
-- installs the CLI tools `.zshrc` expects (`eza`, `bat`, `starship`, `fzf`,
+- installs the CLI tools `.zshrc` expects (`bat`, `starship`, `fzf`,
   `zoxide`, `zsh-autosuggestions`, `zsh-syntax-highlighting`, `jq`) via
   `brew bundle` on macOS or `apt` on Linux;
 - links Claude Code skills (`ai/bridges/link-claude.sh`);

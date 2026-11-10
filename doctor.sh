@@ -46,7 +46,7 @@ fi
 echo
 
 echo "=== CLI dependencies ==="
-for tool in eza fzf zoxide jq; do
+for tool in fzf zoxide jq; do
   if command -v "$tool" >/dev/null 2>&1; then
     pass "$tool installed"
   else

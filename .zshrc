@@ -90,13 +90,6 @@ alias python=python3
 alias pip=pip3
 
 # Modern CLI replacements (fall back cleanly if not installed yet — run ./setup.sh)
-if command -v eza >/dev/null 2>&1; then
-  alias ls='eza'
-  alias ll='eza -l --git'
-  alias la='eza -la --git'
-  alias tree='eza --tree'
-fi
-
 if command -v bat >/dev/null 2>&1; then
   alias cat='bat --paging=never'
 elif command -v batcat >/dev/null 2>&1; then

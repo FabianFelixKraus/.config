@@ -213,27 +213,13 @@ install_dependencies_macos() {
 
 install_dependencies_linux() {
   if ! command -v apt-get >/dev/null 2>&1; then
-    echo "No apt-get found -- install eza, bat, starship, fzf, zoxide," >&2
+    echo "No apt-get found -- install bat, starship, fzf, zoxide," >&2
     echo "zsh-autosuggestions, zsh-syntax-highlighting and jq yourself for your distro." >&2
     return 1
   fi
 
   sudo apt-get update
   sudo apt-get install -y zsh fzf zoxide bat jq zsh-autosuggestions zsh-syntax-highlighting
-
-  # eza isn't in every release's default apt repos yet -- fall back to eza's
-  # own apt repo if the plain install fails.
-  if ! command -v eza >/dev/null 2>&1 && ! sudo apt-get install -y eza 2>/dev/null; then
-    echo "eza not available via the default apt repos -- adding eza's official apt repo..."
-    sudo mkdir -p /etc/apt/keyrings
-    curl -fsSL https://raw.githubusercontent.com/eza-community/eza/main/deb.asc \
-      | sudo gpg --dearmor -o /etc/apt/keyrings/gierens.gpg
-    echo "deb [signed-by=/etc/apt/keyrings/gierens.gpg] http://deb.gierens.de stable main" \
-      | sudo tee /etc/apt/sources.list.d/gierens.list >/dev/null
-    sudo chmod 644 /etc/apt/keyrings/gierens.gpg /etc/apt/sources.list.d/gierens.list
-    sudo apt-get update
-    sudo apt-get install -y eza
-  fi
 
   # starship has no apt package -- use its official installer (to
   # /usr/local/bin, so every user on the machine gets it).
