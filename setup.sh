@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Bootstraps a freshly cloned ~/.config on a new machine.
+# Bootstraps (or re-syncs) ~/.config on a machine: macOS or Ubuntu/Debian Linux.
 #
-# Writes machines/<hostname>.zsh (see README.md -> "Machine profiles") and
-# then runs the setup steps that match the chosen profile. Safe to re-run:
-# it refuses to overwrite an existing machine profile unless --force is passed.
+# First run: writes machines/<hostname>.zsh (see README.md -> "Machine
+# profiles") and installs the CLI tools .zshrc expects (via Homebrew on
+# macOS, apt on Linux). Safe to re-run any time to re-sync dependencies --
+# it reuses an existing machine profile instead of re-prompting, unless
+# --force is passed.
 set -euo pipefail
 
 CONFIG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,93 +13,221 @@ MACHINES_DIR="$CONFIG_DIR/machines"
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--trade-republic=yes|no] [--profile=desktop|cli] [--force]
+Usage: $(basename "$0") [--trade-republic=yes|no] [--profile=desktop|cli]
+                 [--auto-update=yes|no] [--auto-update-reboot=yes|no]
+                 [--auto-update-reboot-time=HH:MM] [--force]
 
-Creates machines/<hostname>.zsh for this machine, then runs the setup steps
-for its profile:
-  --trade-republic=yes|no   Enable the dx / Trade Republic tooling in .zshrc.
-  --profile=desktop|cli     desktop: also wire up iTerm2, the daily git-fetch
-                             launchd job, IdeaVim, etc. cli: skip GUI-only setup.
-  --force                   Overwrite an existing machines/<hostname>.zsh.
+Creates machines/<hostname>.zsh for this machine (skipped if it already
+exists, unless --force), then always installs CLI dependencies, links
+Claude Code skills, and configures OS auto-updates (./auto-update.sh); on a
+desktop profile also wires up the daily git-fetch launchd job and IdeaVim
+(macOS only).
 
-With no flags, prompts interactively. Non-interactively (no TTY), both
---trade-republic and --profile are required.
+  --trade-republic=yes|no        Enable the dx / Trade Republic tooling in .zshrc.
+  --profile=desktop|cli          desktop: also run the macOS desktop steps above.
+                                   cli: skip them (e.g. a remote box you only SSH into).
+  --auto-update=yes|no           Keep this machine on the latest OS packages. Default yes.
+  --auto-update-reboot=yes|no    Linux only: reboot itself when an update needs it. Default yes.
+  --auto-update-reboot-time=HH:MM  Linux only: local-time maintenance window. Default 04:00.
+  --force                        Re-ask and overwrite an existing machines/<hostname>.zsh.
+
+With no flags, prompts interactively the first time. Non-interactively (no
+TTY) on a machine with no existing profile, --trade-republic and --profile
+are required (auto-update flags default sensibly if omitted).
 EOF
 }
 
 TRADE_REPUBLIC=""
 PROFILE=""
+AUTO_UPDATE=""
+AUTO_UPDATE_REBOOT=""
+AUTO_UPDATE_REBOOT_TIME=""
 FORCE="no"
 
 for arg in "$@"; do
   case "$arg" in
     --trade-republic=*) TRADE_REPUBLIC="${arg#*=}" ;;
     --profile=*) PROFILE="${arg#*=}" ;;
+    --auto-update=*) AUTO_UPDATE="${arg#*=}" ;;
+    --auto-update-reboot=*) AUTO_UPDATE_REBOOT="${arg#*=}" ;;
+    --auto-update-reboot-time=*) AUTO_UPDATE_REBOOT_TIME="${arg#*=}" ;;
     --force) FORCE="yes" ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $arg" >&2; usage; exit 1 ;;
   esac
 done
 
-if [[ "$(uname)" != "Darwin" ]]; then
-  echo "setup.sh only automates the macOS setup. See README.md for Windows." >&2
-  exit 1
-fi
+OS="$(uname)"
+case "$OS" in
+  Darwin|Linux) ;;
+  *) echo "setup.sh only automates macOS and Linux. See README.md for Windows." >&2; exit 1 ;;
+esac
 
 HOST="$(scutil --get LocalHostName 2>/dev/null || hostname -s)"
 PROFILE_FILE="$MACHINES_DIR/$HOST.zsh"
 
 if [[ -f "$PROFILE_FILE" && "$FORCE" != "yes" ]]; then
-  echo "machines/$HOST.zsh already exists:"
+  echo "Using existing machines/$HOST.zsh:"
   echo "---"
   cat "$PROFILE_FILE"
   echo "---"
-  echo "Pass --force to reconfigure this machine."
-  exit 0
-fi
-
-if [[ -z "$TRADE_REPUBLIC" ]]; then
-  if [[ -t 0 ]]; then
-    read -r -p "Is this a Trade Republic machine? [y/N] " ans
-    case "$ans" in
-      y|Y|yes|YES) TRADE_REPUBLIC="yes" ;;
-      *) TRADE_REPUBLIC="no" ;;
-    esac
-  else
-    echo "Not running interactively and --trade-republic was not given." >&2
-    usage
-    exit 1
+  # shellcheck disable=SC1090
+  source "$PROFILE_FILE"
+  TRADE_REPUBLIC="${CONFIG_TRADE_REPUBLIC:-no}"
+  PROFILE="${CONFIG_PROFILE:-desktop}"
+  AUTO_UPDATE="${CONFIG_AUTO_UPDATE:-yes}"
+  AUTO_UPDATE_REBOOT="${CONFIG_AUTO_UPDATE_REBOOT:-yes}"
+  AUTO_UPDATE_REBOOT_TIME="${CONFIG_AUTO_UPDATE_REBOOT_TIME:-04:00}"
+  echo "(pass --force to reconfigure this machine instead)"
+  echo
+else
+  if [[ -z "$TRADE_REPUBLIC" ]]; then
+    if [[ -t 0 ]]; then
+      read -r -p "Is this a Trade Republic machine? [y/N] " ans
+      case "$ans" in
+        y|Y|yes|YES) TRADE_REPUBLIC="yes" ;;
+        *) TRADE_REPUBLIC="no" ;;
+      esac
+    else
+      echo "Not running interactively and --trade-republic was not given." >&2
+      usage
+      exit 1
+    fi
   fi
-fi
 
-case "$TRADE_REPUBLIC" in
-  yes|no) ;;
-  *) echo "--trade-republic must be yes or no, got: $TRADE_REPUBLIC" >&2; exit 1 ;;
-esac
+  case "$TRADE_REPUBLIC" in
+    yes|no) ;;
+    *) echo "--trade-republic must be yes or no, got: $TRADE_REPUBLIC" >&2; exit 1 ;;
+  esac
 
-if [[ -z "$PROFILE" ]]; then
-  if [[ -t 0 ]]; then
-    read -r -p "Profile for this machine? [desktop/cli] (desktop) " ans
-    PROFILE="${ans:-desktop}"
-  else
-    echo "Not running interactively and --profile was not given." >&2
-    usage
-    exit 1
+  if [[ -z "$PROFILE" ]]; then
+    if [[ -t 0 ]]; then
+      read -r -p "Profile for this machine? [desktop/cli] (desktop) " ans
+      PROFILE="${ans:-desktop}"
+    else
+      echo "Not running interactively and --profile was not given." >&2
+      usage
+      exit 1
+    fi
   fi
-fi
 
-case "$PROFILE" in
-  desktop|cli) ;;
-  *) echo "--profile must be desktop or cli, got: $PROFILE" >&2; exit 1 ;;
-esac
+  case "$PROFILE" in
+    desktop|cli) ;;
+    *) echo "--profile must be desktop or cli, got: $PROFILE" >&2; exit 1 ;;
+  esac
 
-mkdir -p "$MACHINES_DIR"
-cat > "$PROFILE_FILE" <<EOF
+  if [[ -z "$AUTO_UPDATE" ]]; then
+    if [[ -t 0 ]]; then
+      read -r -p "Keep this machine on the latest OS packages automatically? [Y/n] " ans
+      case "$ans" in
+        n|N|no|NO) AUTO_UPDATE="no" ;;
+        *) AUTO_UPDATE="yes" ;;
+      esac
+    else
+      AUTO_UPDATE="yes"
+    fi
+  fi
+
+  case "$AUTO_UPDATE" in
+    yes|no) ;;
+    *) echo "--auto-update must be yes or no, got: $AUTO_UPDATE" >&2; exit 1 ;;
+  esac
+
+  if [[ "$AUTO_UPDATE" == "yes" && "$OS" == "Linux" ]]; then
+    if [[ -z "$AUTO_UPDATE_REBOOT" ]]; then
+      if [[ -t 0 ]]; then
+        read -r -p "Auto-reboot when an update needs it (e.g. new kernel)? [Y/n] " ans
+        case "$ans" in
+          n|N|no|NO) AUTO_UPDATE_REBOOT="no" ;;
+          *) AUTO_UPDATE_REBOOT="yes" ;;
+        esac
+      else
+        AUTO_UPDATE_REBOOT="yes"
+      fi
+    fi
+    if [[ -z "$AUTO_UPDATE_REBOOT_TIME" ]]; then
+      if [[ -t 0 && "$AUTO_UPDATE_REBOOT" == "yes" ]]; then
+        read -r -p "Maintenance window for that reboot? [HH:MM] (04:00) " ans
+        AUTO_UPDATE_REBOOT_TIME="${ans:-04:00}"
+      else
+        AUTO_UPDATE_REBOOT_TIME="04:00"
+      fi
+    fi
+  else
+    AUTO_UPDATE_REBOOT="${AUTO_UPDATE_REBOOT:-yes}"
+    AUTO_UPDATE_REBOOT_TIME="${AUTO_UPDATE_REBOOT_TIME:-04:00}"
+  fi
+
+  case "$AUTO_UPDATE_REBOOT" in
+    yes|no) ;;
+    *) echo "--auto-update-reboot must be yes or no, got: $AUTO_UPDATE_REBOOT" >&2; exit 1 ;;
+  esac
+
+  mkdir -p "$MACHINES_DIR"
+  cat > "$PROFILE_FILE" <<EOF
 # Generated by setup.sh on $(date +%Y-%m-%d).
 export CONFIG_TRADE_REPUBLIC="$TRADE_REPUBLIC"
 export CONFIG_PROFILE="$PROFILE"
+export CONFIG_AUTO_UPDATE="$AUTO_UPDATE"
+export CONFIG_AUTO_UPDATE_REBOOT="$AUTO_UPDATE_REBOOT"
+export CONFIG_AUTO_UPDATE_REBOOT_TIME="$AUTO_UPDATE_REBOOT_TIME"
 EOF
-echo "Wrote machines/$HOST.zsh (trade_republic=$TRADE_REPUBLIC, profile=$PROFILE)"
+  echo "Wrote machines/$HOST.zsh (trade_republic=$TRADE_REPUBLIC, profile=$PROFILE, auto_update=$AUTO_UPDATE)"
+  echo
+fi
+
+# --- Dependencies (OS-specific) --------------------------------------------
+
+install_dependencies_macos() {
+  if ! command -v brew >/dev/null 2>&1; then
+    echo "Homebrew not found -- install it from https://brew.sh, then re-run ./setup.sh." >&2
+    return 1
+  fi
+  brew bundle --file="$CONFIG_DIR/Brewfile"
+}
+
+install_dependencies_linux() {
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "No apt-get found -- install eza, bat, starship, fzf, zoxide," >&2
+    echo "zsh-autosuggestions, zsh-syntax-highlighting and jq yourself for your distro." >&2
+    return 1
+  fi
+
+  sudo apt-get update
+  sudo apt-get install -y zsh fzf zoxide bat jq zsh-autosuggestions zsh-syntax-highlighting
+
+  # Debian/Ubuntu ship bat's binary as `batcat` (name clash with another package).
+  if ! command -v bat >/dev/null 2>&1 && command -v batcat >/dev/null 2>&1; then
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "$(command -v batcat)" "$HOME/.local/bin/bat"
+  fi
+
+  # eza isn't in every release's default apt repos yet -- fall back to eza's
+  # own apt repo if the plain install fails.
+  if ! command -v eza >/dev/null 2>&1 && ! sudo apt-get install -y eza 2>/dev/null; then
+    echo "eza not available via the default apt repos -- adding eza's official apt repo..."
+    sudo mkdir -p /etc/apt/keyrings
+    curl -fsSL https://raw.githubusercontent.com/eza-community/eza/main/deb.asc \
+      | sudo gpg --dearmor -o /etc/apt/keyrings/gierens.gpg
+    echo "deb [signed-by=/etc/apt/keyrings/gierens.gpg] http://deb.gierens.de stable main" \
+      | sudo tee /etc/apt/sources.list.d/gierens.list >/dev/null
+    sudo chmod 644 /etc/apt/keyrings/gierens.gpg /etc/apt/sources.list.d/gierens.list
+    sudo apt-get update
+    sudo apt-get install -y eza
+  fi
+
+  # starship has no apt package -- use its official installer.
+  if ! command -v starship >/dev/null 2>&1; then
+    curl -sS https://starship.rs/install.sh | sh -s -- -y
+  fi
+}
+
+echo "Installing CLI dependencies..."
+if [[ "$OS" == "Darwin" ]]; then
+  install_dependencies_macos || echo "Dependency install had issues -- see above."
+else
+  install_dependencies_linux || echo "Dependency install had issues -- see above."
+fi
 echo
 
 # --- Steps that apply to every machine -------------------------------------
@@ -108,14 +238,13 @@ if [[ -x "$CONFIG_DIR/ai/bridges/link-claude.sh" ]]; then
   echo
 fi
 
-# --- Desktop-only steps ------------------------------------------------------
+echo "Configuring OS auto-updates..."
+"$CONFIG_DIR/auto-update.sh" || echo "auto-update.sh had issues -- see above."
+echo
 
-if [[ "$PROFILE" == "desktop" ]]; then
-  echo "Linking iTerm2 Dynamic Profile..."
-  mkdir -p "$HOME/Library/Application Support/iTerm2/DynamicProfiles"
-  ln -sf "$CONFIG_DIR/iterm2/DynamicProfiles/fabian.json" \
-    "$HOME/Library/Application Support/iTerm2/DynamicProfiles/fabian.json"
+# --- Desktop-only steps (macOS) ----------------------------------------------
 
+if [[ "$PROFILE" == "desktop" && "$OS" == "Darwin" ]]; then
   echo "Installing daily git-fetch-all launchd job..."
   mkdir -p "$HOME/Library/LaunchAgents"
   ln -sf "$CONFIG_DIR/git/launchd/com.fabiankraus.git-fetch-all.plist" \
@@ -134,13 +263,14 @@ if [[ "$PROFILE" == "desktop" ]]; then
   cat <<'EOF2'
 Remaining manual desktop steps (see README.md for details):
   - brew install --cask font-jetbrains-mono font-symbols-only-nerd-font
-  - iTerm2 -> Preferences -> Profiles -> "Fabian (Catppuccin Macchiato)"
-    -> right-click -> Set as Default
+    then set it as your terminal's font (needed for the Nerd Font glyph in starship.toml)
   - brew install --cask nikitabobko/tap/aerospace
     open -a AeroSpace   # grant Accessibility access when prompted
 EOF2
+elif [[ "$PROFILE" == "desktop" ]]; then
+  echo "desktop profile on Linux: no extra automation yet (this repo's desktop integrations are macOS-only)."
 else
-  echo "cli profile: skipping iTerm2 / git-fetch-all launchd / IdeaVim (desktop-only)."
+  echo "cli profile: skipping git-fetch-all launchd / IdeaVim (desktop-only, macOS)."
 fi
 
 if [[ "$TRADE_REPUBLIC" == "yes" ]]; then
@@ -149,5 +279,46 @@ if [[ "$TRADE_REPUBLIC" == "yes" ]]; then
   echo "if you haven't already -- this repo only wires .zshrc to use them once present."
 fi
 
+# --- Sync this machine's profile to git -------------------------------------
+# This is the one file that's actually specific to this machine, so make
+# sure the fleet (and GitHub) actually has it -- that's the whole point of
+# tracking decisions in git instead of leaving them as local-only state.
+
+sync_machine_profile_to_git() {
+  cd "$CONFIG_DIR"
+  git rev-parse --git-dir >/dev/null 2>&1 || { echo "Not a git repo?!" >&2; return 1; }
+
+  local needs_commit="no"
+  if ! git ls-files --error-unmatch "machines/$HOST.zsh" >/dev/null 2>&1; then
+    needs_commit="yes"
+  elif ! git diff --quiet -- "machines/$HOST.zsh" || ! git diff --cached --quiet -- "machines/$HOST.zsh"; then
+    needs_commit="yes"
+  fi
+
+  if [[ "$needs_commit" != "yes" ]]; then
+    echo "machines/$HOST.zsh already committed and in sync."
+    return 0
+  fi
+
+  echo "Committing machines/$HOST.zsh..."
+  git add "machines/$HOST.zsh"
+  if ! git commit -m "chore(machines): sync profile for $HOST" >/dev/null; then
+    echo "Could not commit (check 'git config user.name'/'user.email' on this machine) -- commit it yourself:" >&2
+    echo "  git add machines/$HOST.zsh && git commit" >&2
+    return 1
+  fi
+
+  if git push >/dev/null 2>&1; then
+    echo "Pushed machines/$HOST.zsh to origin -- every other machine will see it on their next 'git pull'."
+  else
+    echo "Committed locally, but couldn't push (no network/credentials yet?) -- run 'git push' once you can." >&2
+  fi
+}
+
+echo
+echo "Syncing this machine's profile to git..."
+sync_machine_profile_to_git || echo "Git sync had issues -- see above."
+
 echo
 echo "Done. Open a new terminal (or run 'exec zsh') to load the new profile."
+echo "Run ./doctor.sh any time to check this machine's health and get pointed at what to fix."

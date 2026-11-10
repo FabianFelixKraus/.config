@@ -89,12 +89,20 @@ fi
 alias python=python3
 alias pip=pip3
 
-# Modern CLI replacements
-alias ls='eza'
-alias ll='eza -l --git'
-alias la='eza -la --git'
-alias tree='eza --tree'
-alias cat='bat --paging=never'
+# Modern CLI replacements (fall back cleanly if not installed yet — run ./setup.sh)
+if command -v eza >/dev/null 2>&1; then
+  alias ls='eza'
+  alias ll='eza -l --git'
+  alias la='eza -la --git'
+  alias tree='eza --tree'
+fi
+
+if command -v bat >/dev/null 2>&1; then
+  alias cat='bat --paging=never'
+elif command -v batcat >/dev/null 2>&1; then
+  # Debian/Ubuntu package the binary as `batcat` (name clash with another package)
+  alias cat='batcat --paging=never'
+fi
 
 # Fetch all git repos in a directory (defaults to ~/Documents)
 fetchall() {
@@ -135,21 +143,20 @@ bindkey '^w' backward-kill-word
 # =============================================================================
 # 6. TERMINAL & PROMPT HOOKS
 # =============================================================================
-# Report current working directory changes cleanly to WezTerm
-if [ -n "$WEZTERM_PANE" ]; then
-precmd() {
-print -Pn "\e]7;file://%m%d\a"
-}
-fi
-
 # Initialize Starship prompt
 if command -v starship >/dev/null 2>&1; then
 eval "$(starship init zsh)"
 fi
 
 # Fish-style autosuggestions (ghost-text completion from history)
-[ -f /opt/homebrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh ] && \
-source /opt/homebrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+# Checks both Homebrew prefixes (Apple Silicon / Intel) and the apt path (Ubuntu/Debian).
+for _rcfile in \
+  /opt/homebrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh \
+  /usr/local/share/zsh-autosuggestions/zsh-autosuggestions.zsh \
+  /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh \
+; do
+  [ -f "$_rcfile" ] && source "$_rcfile" && break
+done
 
 # fzf (Ctrl+R history search, Ctrl+T file search, **<Tab> completion)
 command -v fzf >/dev/null 2>&1 && eval "$(fzf --zsh)"
@@ -158,8 +165,14 @@ command -v fzf >/dev/null 2>&1 && eval "$(fzf --zsh)"
 command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init zsh)"
 
 # zsh-syntax-highlighting (must be sourced last, after other widget-wrapping plugins)
-[ -f /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ] && \
-source /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+for _rcfile in \
+  /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh \
+  /usr/local/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh \
+  /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh \
+; do
+  [ -f "$_rcfile" ] && source "$_rcfile" && break
+done
+unset _rcfile
 
 echo -e "\n✅ Profile loaded successfully."
 
