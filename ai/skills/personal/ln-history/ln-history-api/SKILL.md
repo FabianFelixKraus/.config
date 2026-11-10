@@ -284,6 +284,16 @@ since it holds key hashes). Migration: `Documentation/migrations/2026-08-01-api-
   `GET ln-history/v{v}/snapshot/{timestamp}`) → `weight`. **Admin-tunable in-DB**, no redeploy.
 - `api.usage` — aggregated ledger `(key_id, usage_day, endpoint)` → `sum_cost, req_count,
   sum_duration_ms, sum_bytes`. Written by async flush, read for reporting.
+- `api.request_log` (added 2026-10-28, migration `2026-10-28-api-request-log.sql`) — one row per
+  **authenticated** request, including 429s: `ts, key_id` (NULL = emergency admin), `method, path,
+  query` (`api_key` param stripped), `route_key, status, cost` (units kept after refund),
+  `charge_outcome` (`allowed|refunded|burst_exceeded|budget_exceeded|concurrency_exceeded`),
+  `duration_ms, bytes, client_ip` (from `CF-Connecting-IP`, since the peer is a Cloudflare edge),
+  `user_agent, trace_id`. Captured in `ApiKeyAuthMiddleware`, buffered in memory (cap
+  `ApiAccess:MaxPendingRequestLog`, 50k), binary-COPYed on the same flush as `api.usage`. 401s are
+  not logged. No retention job. CLI: `ln_api_admin.py requests [--key LABEL] [--since T] [--summary]`.
+  Before 2026-10-28 ~07:45 UTC, per-request history exists only in Tempo
+  (`{ span.lnhistory.key.owner = "<label>" }`) and the nginx-proxy-manager access log (no key column).
 
 **Cost model.** Each request's cost = the static weight of its endpoint (seeded from documented DB
 costs: cheap lookups=1, lists=3, `stats`=3, `snapshot`=100 / `?withUpdates`=150, `snapshot-diff`=40,
@@ -369,6 +379,48 @@ The DB is reachable from the dev machine over Tailscale; `psql` works with the
 cost-gate protocol (EXPLAIN heavy queries; > 1M total_cost => warn) before running
 anything that touches `channel_updates` (145M), `gossip_inventory` (264M),
 `node_addresses` (75M), etc.
+
+## Observability (verified live 2026-09-03)
+
+The deployed image is **`ln-history-api:pr5-839f176`** (head of PR #5), built locally
+because CI cannot publish. Its OTel wiring is complete and working:
+
+- **Traces**: `AddAspNetCoreInstrumentation` + `AddHttpClientInstrumentation` +
+  **`AddNpgsql()`**. Every request is a server span with Npgsql child spans carrying
+  `db.system.name` and `db.query.text`. The WebSocket `/stream` route and `/swagger`
+  are filtered out — a multi-hour stream span would otherwise pin the span-metrics
+  latency histogram and hold `ApiHighLatency` permanently firing.
+- **Metrics**: OTLP → collector → re-exposed on `:8889`, scraped as job
+  `otel-collector-apps` with `honor_labels: true`, so the series land under
+  `job="ln-history-api"`. 50 metric names: `http_server_*`, `kestrel_*`, `dotnet_*`,
+  `aspnetcore_*`, `ln_api_*`, `ln_gossip_*`.
+- **Logs**: OTLP → collector → Loki `/otlp`, arriving with `trace_id` / `span_id` as
+  **structured metadata** (not indexed labels — Loki categorises them correctly, only
+  15 streams exist). This is what makes trace↔log correlation work.
+
+**Do not trust a sample of traces to tell you whether instrumentation exists.**
+~99% of stored traces are single-span 401s from internet scanners hitting `/` with
+no API key. Sampling a few and seeing one span each looks exactly like "Npgsql
+instrumentation is missing". Always filter `{ span.http.route != "" }`.
+
+The attribute is **`db.system.name`**, not `db.system` (OTel semconv ≥1.30), so
+`{ span.db.system != "" }` matches nothing even when DB spans are present.
+
+**Log levels are pinned in `docker-compose.yaml`, not in appsettings**:
+`Logging__LogLevel__Default=Information`, `__Microsoft=Warning`, `__Npgsql=Warning`,
+`__System.Net.Http.HttpClient=Warning`. Without them the API emitted ~34 lines/second
+— every SQL statement (`Npgsql.Command` at Information), every OTLP export HTTP
+request, and six lines of MVC pipeline narration per request. That was 94% of all
+logs in the whole stack. All of it is already in the spans.
+
+**Alloy does not tail this container.** It is the only service whose logs go via OTLP,
+and having both paths stored every line twice under different labels. Query API logs
+with `{service_name="ln-history-api"}` — `service_name` is the one Loki label present
+on both ingestion paths.
+
+Metrics referenced by old dashboards that **do not exist** in this build:
+`ln_api_stream_rejections_total`, `ln_gossip_frames_dropped_total`,
+`ln_gossip_notifications_discarded_total`.
 
 ## Known follow-ups / gotchas
 
